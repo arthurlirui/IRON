@@ -68,15 +68,20 @@ class Dataset:
             # traceback.print_exc()
 
             print("Loading png images failed; try loading exr images")
-            import pyexr
-
-            self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
-            self.n_images = len(self.images_lis)
-            self.images_np = np.clip(
-                np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]), 1.0 / 2.2),
-                0.0,
-                1.0,
-            )
+            if False:
+                import pyexr
+                self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
+                self.n_images = len(self.images_lis)
+                self.images_np = np.clip(
+                    np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]), 1.0 / 2.2),
+                    0.0,
+                    1.0,
+                )
+            else:
+                import imageio
+                self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
+                self.n_images = len(self.images_lis)
+                self.images_np = np.stack([imageio.v3.imread(im_name) for im_name in self.images_lis])
 
         no_mask = True
         if no_mask:
