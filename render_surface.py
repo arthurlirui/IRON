@@ -17,7 +17,7 @@ from models.fields import SDFNetwork, RenderingNetwork
 from models.raytracer import RayTracer, Camera, render_camera
 from models.renderer_ggx import GGXColocatedRenderer
 from models.image_losses import PyramidL2Loss, ssim_loss_fn
-from models.export_mesh import export_mesh
+from models.export_mesh import export_mesh, export_mesh_no_translation
 from models.export_materials import export_materials
 
 ###### arguments
@@ -54,11 +54,13 @@ def config_parser():
         action="store_true",
         help="whether to render the input image set",
     )
+    parser.add_argument("--gpu", type=int, default=0)
     return parser
 
 
 parser = config_parser()
 args = parser.parse_args()
+torch.cuda.set_device(args.gpu)
 ic(args)
 
 ###### back up arguments and code scripts
@@ -250,8 +252,12 @@ def load_datadir(datadir):
     gt_images = []
     Ks = []
     W2Cs = []
+    imgtype = 'jpg'
     for x in imgnames:
-        fpath = os.path.join(datadir, "image", x)
+        if x[-4:] == imgtype:
+            fpath = os.path.join(datadir, imgtype, x)
+        else:
+            fpath = os.path.join(datadir, imgtype, x[:-4]+'.'+imgtype)
         assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
         im = imageio.imread(fpath).astype(np.float32) / 255.0
         K = np.array(cam_dict[x]["K"]).reshape((4, 4)).astype(np.float32)
@@ -322,10 +328,17 @@ def export_mesh_and_materials(export_out_dir, sdf_network, color_network_dict):
     sdf_fn = lambda x: sdf_network(x)[..., 0]
     ic("Exporting mesh and uv...")
     with torch.no_grad():
-        export_mesh(sdf_fn, os.path.join(export_out_dir, "mesh.obj"))
-        os.system(
-            f"{blender_fpath} --background --python models/export_uv.py {os.path.join(export_out_dir, 'mesh.obj')} {os.path.join(export_out_dir, 'mesh.obj')}"
-        )
+        if True:
+            mesh_name = 'mesh.obj'
+            export_mesh(sdf_fn, os.path.join(export_out_dir, mesh_name))
+            os.system(
+                f"{blender_fpath} --background --python models/export_uv.py {os.path.join(export_out_dir, mesh_name)} {os.path.join(export_out_dir, mesh_name)}"
+            )
+        if False:
+            mesh_name = 'mesh_no_translation.obj'
+            export_mesh_no_translation(sdf_fn, os.path.join(export_out_dir, mesh_name))
+            os.system(f"{blender_fpath} --background --python models/export_uv.py {os.path.join(export_out_dir, mesh_name)} {os.path.join(export_out_dir, mesh_name)}")
+
 
     class MaterialPredictor(nn.Module):
         def __init__(self, sdf_network, color_network_dict):
@@ -344,7 +357,7 @@ def export_mesh_and_materials(export_out_dir, sdf_network, color_network_dict):
     ic("Exporting materials...")
     material_predictor = MaterialPredictor(sdf_network, color_network_dict)
     with torch.no_grad():
-        export_materials(os.path.join(export_out_dir, "mesh.obj"), material_predictor, export_out_dir)
+        export_materials(os.path.join(export_out_dir, mesh_name), material_predictor, export_out_dir)
 
     ic(f"Exported mesh and materials to: {export_out_dir}")
 
@@ -392,6 +405,8 @@ if args.inv_gamma_gt:
 
 ic(fill_holes, handle_edges, is_training, args.inv_gamma_gt)
 writer = SummaryWriter(log_dir=os.path.join(args.out_dir, "logs"))
+
+global_step = args.num_iters
 
 for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     sdf_optimizer.zero_grad()

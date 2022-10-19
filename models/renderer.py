@@ -244,7 +244,7 @@ class NeuSRenderer:
             F.relu(-true_cos * 0.5 + 0.5) * (1.0 - cos_anneal_ratio) + F.relu(-true_cos) * cos_anneal_ratio
         )  # always non-positive
 
-        # Estimate signed distances at section points
+        # Estimate signed  distances at section points
         estimated_next_sdf = sdf + iter_cos * dists.reshape(-1, 1) * 0.5
         estimated_prev_sdf = sdf - iter_cos * dists.reshape(-1, 1) * 0.5
 

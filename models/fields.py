@@ -5,6 +5,14 @@ import numpy as np
 from models.embedder import get_embedder
 
 
+class tinySDFNetwork():
+    __author__ = 'Arthur'
+    def __init__(self):
+        pass
+
+    def forward(self, inputs):
+        pass
+
 # This implementation is borrowed from IDR: https://github.com/lioryariv/idr
 class SDFNetwork(nn.Module):
     def __init__(

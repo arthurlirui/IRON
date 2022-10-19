@@ -59,8 +59,9 @@ class Dataset:
 
         self.camera_dict = camera_dict
 
+        folder_name = self.conf['folder_name'] if 'folder_name' in self.conf else 'image'
         try:
-            self.images_lis = sorted(glob(os.path.join(self.data_dir, "image/*.png")))
+            self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.png")))
             self.n_images = len(self.images_lis)
             self.images_np = np.stack([cv.imread(im_name) for im_name in self.images_lis]) / 255.0
         except:
@@ -69,7 +70,7 @@ class Dataset:
             print("Loading png images failed; try loading exr images")
             import pyexr
 
-            self.images_lis = sorted(glob(os.path.join(self.data_dir, "image/*.exr")))
+            self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
             self.n_images = len(self.images_lis)
             self.images_np = np.clip(
                 np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]), 1.0 / 2.2),
