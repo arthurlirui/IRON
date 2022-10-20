@@ -8,6 +8,7 @@ from icecream import ic
 from scipy.spatial.transform import Rotation as Rot
 from scipy.spatial.transform import Slerp
 import traceback
+import imageio
 
 
 # This function is borrowed from IDR: https://github.com/lioryariv/idr
@@ -213,9 +214,11 @@ class Dataset:
 
     def image_at(self, idx, resolution_level):
         if self.images_lis[idx].endswith(".exr"):
-            import pyexr
-
-            img = np.power(pyexr.open(self.images_lis[idx]).get()[:, :, ::-1], 1.0 / 2.2) * 255.0
+            if False:
+                import pyexr
+                img = np.power(pyexr.open(self.images_lis[idx]).get()[:, :, ::-1], 1.0 / 2.2) * 255.0
+            else:
+                img = imageio.v3.imread(self.images_lis[idx])
         else:
             img = cv.imread(self.images_lis[idx])
         return (cv.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255).astype(np.uint8)
