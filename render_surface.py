@@ -259,7 +259,7 @@ def load_datadir(datadir):
         else:
             fpath = os.path.join(datadir, imgtype, x[:-4]+'.'+imgtype)
         assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
-        im = imageio.imread(fpath).astype(np.float32) / 255.0
+        im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
         K = np.array(cam_dict[x]["K"]).reshape((4, 4)).astype(np.float32)
         W2C = np.array(cam_dict[x]["W2C"]).reshape((4, 4)).astype(np.float32)
 
