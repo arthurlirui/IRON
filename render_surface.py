@@ -25,6 +25,7 @@ def config_parser():
     parser = configargparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default=None, help="input data directory")
     parser.add_argument("--out_dir", type=str, default=None, help="output directory")
+    parser.add_argument("--folder_name", type=str, default="image", help="dataset image folder")
     parser.add_argument("--neus_ckpt_fpath", type=str, default=None, help="checkpoint to load")
     parser.add_argument("--num_iters", type=int, default=100001, help="number of iterations")
     parser.add_argument("--patch_size", type=int, default=128, help="width and height of the rendered patches")
@@ -240,7 +241,7 @@ def to8b(x):
     return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)
 
 
-def load_datadir(datadir):
+def load_datadir(datadir, folder_name='image'):
     cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
     imgnames = list(cam_dict.keys())
     try:
@@ -252,14 +253,33 @@ def load_datadir(datadir):
     gt_images = []
     Ks = []
     W2Cs = []
-    imgtype = 'jpg'
+    imgtype = 'png'
+    # load file from folder image
     for x in imgnames:
-        if x[-4:] == imgtype:
-            fpath = os.path.join(datadir, imgtype, x)
-        else:
-            fpath = os.path.join(datadir, imgtype, x[:-4]+'.'+imgtype)
-        assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
-        im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        #if x.endswith('png') or x.endswith('jpg'):
+        #    fpath = os.path.join(datadir, 'image', x)
+        if False:
+            if x[-4:] == imgtype:
+                fpath = os.path.join(datadir, imgtype, x)
+            else:
+                fpath = os.path.join(datadir, imgtype, x[:-4]+'.'+imgtype)
+            assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
+            im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        if True:
+            filename = x.split('.')[0]
+            if os.path.exists(os.path.join(datadir, folder_name, filename+'.png')):
+                fpath = os.path.join(datadir, folder_name, filename+'.png')
+                im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+            elif os.path.exists(os.path.join(datadir, folder_name, filename+'.jpg')):
+                fpath = os.path.join(datadir, folder_name, filename + '.jpg')
+                im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+            elif os.path.exists(os.path.join(datadir, folder_name, filename+'.exr')):
+                fpath = os.path.join(datadir, folder_name, filename + '.exr')
+                im = imageio.v3.imread(fpath)
+                im = np.clip(np.power(im, 1.0/2.2), 0, 1)    # gamma correction
+            else:
+                assert fpath[-4:] in [".jpg", ".png", ".exr"], "must use ldr images as inputs"
+
         K = np.array(cam_dict[x]["K"]).reshape((4, 4)).astype(np.float32)
         W2C = np.array(cam_dict[x]["W2C"]).reshape((4, 4)).astype(np.float32)
 
@@ -392,7 +412,8 @@ if args.render_all:
         for x in list(results.keys()):
             results[x] = results[x].detach().cpu().numpy()
         color_im = results["color"]
-        imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath)), to8b(color_im))
+
+        imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0]+'.jpg'), to8b(color_im))
     exit(0)
 
 ###### training
