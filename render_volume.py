@@ -25,9 +25,11 @@ class Runner:
         self.conf_path = conf_path
         f = open(self.conf_path)
         conf_text = f.read()
+
+        print(conf_text)
         conf_text = conf_text.replace("CASE_NAME", case)
         f.close()
-
+        print(conf_text)
         self.conf = ConfigFactory.parse_string(conf_text)
         self.conf["dataset.data_dir"] = self.conf["dataset.data_dir"].replace("CASE_NAME", case)
         self.base_exp_dir = self.conf["general.base_exp_dir"]
