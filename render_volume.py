@@ -431,7 +431,7 @@ class Runner:
 
 
 if __name__ == "__main__":
-    print("Hello Wooden")
+    print("Hello Arthur")
 
     torch.set_default_tensor_type("torch.cuda.FloatTensor")
 
@@ -447,6 +447,7 @@ if __name__ == "__main__":
     parser.add_argument("--case", type=str, default="")
 
     args = parser.parse_args()
+    print(args)
 
     torch.cuda.set_device(args.gpu)
     runner = Runner(args.conf, args.mode, args.case, args.is_continue)
