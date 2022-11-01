@@ -22,15 +22,16 @@ def process_image():
 def process_json():
     json_path = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/IRON/data_flashlight_real/buddha/test'
     import json
-    jsons = json.load(open(os.path.join(json_path, 'cam_dict_norm.json')))
-    new_filename = 'cam_dict_norm_new.json'
+    jsons = json.load(open(os.path.join(json_path, 'cam_dict_norm_bak.json')))
+    new_filename = 'cam_dict_norm.json'
     print(jsons)
     new_jsons = {}
     print(jsons.keys())
     for key in jsons:
         new_key = key.split('.')[0]+'.png'
         new_jsons[new_key] = jsons[key]
-    json.dumps(new_jsons, open(os.path.join(json_path, new_filename), 'w'))
+    print(new_jsons)
+    json.dump(new_jsons, open(os.path.join(json_path, new_filename), 'w'))
 
 
 if __name__ == '__main__':

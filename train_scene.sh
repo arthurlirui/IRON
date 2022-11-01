@@ -1,6 +1,6 @@
 SCENE=$1
 
-python render_volume.py --mode train --conf ./confs/womask_iron.conf --case ${SCENE}
+python render_volume.py --mode train --conf ./confs/womask_iron.conf --case ${SCENE} --is_continue
 
 python render_surface.py --data_dir ./data_flashlight/${SCENE}/train \
                                  --out_dir ./exp_iron_stage2/${SCENE} \
