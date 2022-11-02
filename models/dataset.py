@@ -218,8 +218,8 @@ class Dataset:
         #near = mid - 1.0
         #far = mid + 1.0
         #print(mid-1.0, mid+1.0)
-        near = torch.minimum(mid - 1.0, 0.05*torch.ones_like(mid))
-        far = torch.maximum(mid + 1.0, 2.0*torch.ones_like(mid))
+        near = torch.maximum(mid - 1.0, 0.05*torch.ones_like(mid))
+        far = torch.minimum(mid + 1.0, 2.0*torch.ones_like(mid))
         #near = 0.1
         #far = 2.0
         return near, far
