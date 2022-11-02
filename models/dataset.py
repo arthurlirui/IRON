@@ -52,7 +52,12 @@ class Dataset:
 
         import json
 
-        camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict_norm.json")))
+        #camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict_norm.json")))
+        #if os.path.exists(os.path.join(self.data_dir, "cam_dict.json")):
+        if False:
+            camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict.json")))
+        else:
+            camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict_norm.json")))
         for x in list(camera_dict.keys()):
             x = x[:-4] + ".png"
             camera_dict[x]["K"] = np.array(camera_dict[x]["K"]).reshape((4, 4))
@@ -65,6 +70,7 @@ class Dataset:
             self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.png")))
             self.n_images = len(self.images_lis)
             self.images_np = np.stack([cv.imread(im_name) for im_name in self.images_lis]) / 255.0
+            #print('min max:', np.min(self.images_np[:]), np.max(self.images_np[:]))
         except:
             # traceback.print_exc()
 
@@ -168,6 +174,7 @@ class Dataset:
         p = torch.matmul(self.intrinsics_all_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # batch_size, 3
         rays_v = torch.matmul(self.pose_all[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
+        #rays_v = rays_v * -1
         rays_o = self.pose_all[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
         return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()  # batch_size, 10
 
@@ -208,8 +215,13 @@ class Dataset:
         a = torch.sum(rays_d**2, dim=-1, keepdim=True)
         b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
         mid = 0.5 * (-b) / a
-        near = mid - 1.0
-        far = mid + 1.0
+        #near = mid - 1.0
+        #far = mid + 1.0
+        #print(mid-1.0, mid+1.0)
+        near = torch.minimum(mid - 1.0, 0.05*torch.ones_like(mid))
+        far = torch.maximum(mid + 1.0, 2.0*torch.ones_like(mid))
+        #near = 0.1
+        #far = 2.0
         return near, far
 
     def image_at(self, idx, resolution_level):
