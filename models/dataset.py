@@ -215,11 +215,11 @@ class Dataset:
         a = torch.sum(rays_d**2, dim=-1, keepdim=True)
         b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
         mid = 0.5 * (-b) / a
-        #near = mid - 1.0
-        #far = mid + 1.0
+        near = mid - 1.0
+        far = mid + 1.0
         #print(mid-1.0, mid+1.0)
-        near = torch.maximum(mid - 1.0, 0.05*torch.ones_like(mid))
-        far = torch.minimum(mid + 1.0, 2.0*torch.ones_like(mid))
+        #near = torch.maximum(mid - 1.0, 0.05*torch.ones_like(mid))
+        #far = torch.minimum(mid + 1.0, 2.0*torch.ones_like(mid))
         #near = 0.1
         #far = 2.0
         return near, far
