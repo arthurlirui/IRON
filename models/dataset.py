@@ -218,9 +218,12 @@ class Dataset:
         if False:
             near = mid - 1.0
             far = mid + 1.0
+        if False:
+            near = mid - 1.5
+            far = mid + 0.5
         if True:
-            near = 0.01 * torch.ones_like(mid)
-            far = 2.0 * torch.ones_like(mid)
+            near = 0.5 * torch.ones_like(mid)
+            far = 1.2 * torch.ones_like(mid)
         if False:
             print(mid-1.0, mid+1.0)
             near = torch.maximum(mid - 1.0, 0.05*torch.ones_like(mid))
