@@ -470,6 +470,9 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     if mask.any():
         pred_img = results["color"].permute(2, 0, 1).unsqueeze(0)
         gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device)
+        #print(pred_img.shape, gt_img.shape)
+        pred_img = pred_img[:, :3, :, :]
+        gt_img = gt_img[:, :3, :, :]
         img_l2_loss = pyramidl2_loss_fn(pred_img, gt_img)
         img_ssim_loss = args.ssim_weight * ssim_loss_fn(pred_img, gt_img, mask.unsqueeze(0).unsqueeze(0))
         img_loss = img_l2_loss + img_ssim_loss
@@ -572,6 +575,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             diffuse_color_im = np.power(diffuse_color_im + 1e-6, 1.0 / 2.2)
             specular_color_im = color_im - diffuse_color_im
 
+        gt_color_im = gt_color_im[..., :3]
+        normal_im = normal_im[..., :3]
         row1 = np.concatenate([gt_color_im, normal_im, edge_mask_im], axis=1)
         row2 = np.concatenate([color_im, diffuse_color_im, specular_color_im], axis=1)
         row3 = np.concatenate([diffuse_albedo_im, specular_albedo_im, specular_roughness_im], axis=1)

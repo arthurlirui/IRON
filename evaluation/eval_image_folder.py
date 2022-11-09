@@ -22,7 +22,9 @@ def read_image(fpath):
 mse2psnr = lambda x: -10. * np.log(x+1e-10) / np.log(10.)
 
 import sys
-folder = sys.argv[1]
+#folder = sys.argv[1]
+folder1 = sys.argv[1]
+folder2 = sys.argv[2]
 
 all_psnr = []
 all_ssim = []
@@ -31,15 +33,19 @@ all_lpips = []
 loss_fn_alex = lpips.LPIPS(net='alex').cuda() # best forward scores
 # loss_fn_vgg = lpips.LPIPS(net='vgg') # closer to "traditional" perceptual loss, when used for optimization
 
-with open(os.path.join(folder, '../metrics.txt'), 'w') as fp:
+with open(os.path.join(folder1, '../metrics.txt'), 'w+') as fp:
     fp.write('img_name\tpsnr\tssim\tlpips\n')
-    for _, fpath in enumerate(glob.glob(os.path.join(folder, '*_truth.png'))):
+    #for _, fpath in enumerate(glob.glob(os.path.join(folder, '*_truth.png'))):
+    for _, fpath in enumerate(glob.glob(os.path.join(folder1, '*.jpg'))):
         name = os.path.basename(fpath)
-        idx = name.find('_')
-        idx = int(name[:idx])
+        #print(name, fpath)
+        #idx = name.find('_')
+        #idx = int(name[:idx])
 
-        pred_im = read_image(os.path.join(folder, '{}_prediction.png'.format(idx)))
-        trgt_im = read_image(os.path.join(folder, '{}_truth.png'.format(idx)))
+        #pred_im = read_image(os.path.join(folder, '{}_prediction.png'.format(idx)))
+        #trgt_im = read_image(os.path.join(folder, '{}_truth.png'.format(idx)))
+        pred_im = read_image(os.path.join(folder1, name))
+        trgt_im = read_image(os.path.join(folder2, name.split('.')[0]+'.png'))
 
         psnr = mse2psnr(np.mean((pred_im - trgt_im) ** 2))
 
@@ -49,7 +55,8 @@ with open(os.path.join(folder, '../metrics.txt'), 'w') as fp:
         trgt_im = torch.from_numpy(trgt_im).permute(2, 0, 1).unsqueeze(0) * 2. - 1.
         d = loss_fn_alex(trgt_im.cuda(), pred_im.cuda()).item()
 
-        fp.write('{}_prediction.png\t{:.3f}\t{:.3f}\t{:.4f}\n'.format(idx, psnr, ssim, d))
+        #fp.write('{}_prediction.png\t{:.3f}\t{:.3f}\t{:.4f}\n'.format(idx, psnr, ssim, d))
+        fp.write('{}\t{:.3f}\t{:.3f}\t{:.4f}\n'.format(name, psnr, ssim, d))
 
         all_psnr.append(psnr)
         all_ssim.append(ssim)
