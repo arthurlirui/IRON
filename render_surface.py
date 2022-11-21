@@ -20,6 +20,8 @@ from models.image_losses import PyramidL2Loss, ssim_loss_fn
 from models.export_mesh import export_mesh, export_mesh_no_translation
 from models.export_materials import export_materials
 
+import kornia
+#from torchmetrics.functional import image_gradients
 ###### arguments
 def config_parser():
     parser = configargparse.ArgumentParser()
@@ -396,6 +398,8 @@ if args.render_all:
     ic(f"Rendering images to: {render_out_dir}")
     n_cams = len(cameras)
     for i in tqdm.tqdm(range(n_cams)):
+        if i < 49:
+            pass
         cam, impath = cameras[i], image_fpaths[i]
         results = render_camera(
             cam,
@@ -409,11 +413,27 @@ if args.render_all:
         )
         if args.gamma_pred:
             results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
+            results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
+            results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
         for x in list(results.keys()):
             results[x] = results[x].detach().cpu().numpy()
         color_im = results["color"]
+        imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0] + '.jpg'), to8b(color_im))
 
-        imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0]+'.jpg'), to8b(color_im))
+        if True:
+            normal = results["normal"]
+            normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
+            normal_im = (normal + 1.0) / 2.0
+            imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0] + '_normal.jpg'),
+                            to8b(normal_im))
+            diff_im = results["diffuse_color"]
+            imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0] + '_diff.jpg'),
+                            to8b(diff_im))
+            specular_im = results["specular_color"]
+            imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0] + '_specular.jpg'),
+                            to8b(specular_im))
+
+
     exit(0)
 
 ###### training
@@ -454,6 +474,9 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
         results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
 
+        w = (results['distance'] / (init_light * torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1e-6))
+        f = results["color"] * torch.stack([w, w, w], dim=-1)
+
     mask = results["convergent_mask"]
     if handle_edges:
         mask = mask | results["edge_mask"]
@@ -467,6 +490,14 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     eik_grad = sdf_network.gradient(eik_points).view(-1, 3)
     eik_cnt = eik_grad.shape[0]
     eik_loss = ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
+
+    #dy, dx = image_gradients(f)
+
+    #sparse_loss = dy.norm(1, dim=-1)+dx.norm(1, dim=-1)
+    out_gradient = kornia.filters.spatial_gradient(f.permute(2, 0, 1).unsqueeze(0), mode='sobel', order=1, normalized=True)
+    #print(out_gradient.shape, f.shape)
+    sparse_loss = out_gradient.norm(1)/torch.numel(out_gradient)
+    print(sparse_loss)
     if mask.any():
         pred_img = results["color"].permute(2, 0, 1).unsqueeze(0)
         gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device)
@@ -491,7 +522,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             roughrange_loss = (roughness - 0.5).mean() * args.roughrange_weight
     eik_loss = eik_loss / eik_cnt * args.eik_weight
 
-    loss = img_loss + eik_loss + roughrange_loss
+    loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss
+
     loss.backward()
     sdf_optimizer.step()
     for x in color_optimizer_dict.keys():
@@ -504,6 +536,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         writer.add_scalar("loss/img_ssim_loss", img_ssim_loss, global_step)
         writer.add_scalar("loss/eik_loss", eik_loss, global_step)
         writer.add_scalar("loss/roughrange_loss", roughrange_loss, global_step)
+        writer.add_scalar("loss/sparse_loss", sparse_loss, global_step)
         writer.add_scalar("light", color_network_dict["point_light_network"].get_light())
 
     if global_step % 1000 == 0:
@@ -527,6 +560,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             img_ssim_loss.item(),
             eik_loss.item(),
             roughrange_loss.item(),
+            sparse_loss.item(),
             color_network_dict["point_light_network"].get_light().item(),
         )
 
@@ -555,10 +589,15 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
             results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
             results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
+
+            w = (results['distance'] / (torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1))
+            f = results["color"] * torch.stack([w, w, w], dim=-1)
+
         for x in list(results.keys()):
             results[x] = results[x].detach().cpu().numpy()
 
         gt_color_im = gt_color_resize.detach().cpu().numpy()
+        nir_sparse = f.detach().cpu().numpy()
         color_im = results["color"]
         diffuse_color_im = results["diffuse_color"]
         specular_color_im = results["specular_color"]
@@ -574,11 +613,15 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             color_im = np.power(color_im + 1e-6, 1.0 / 2.2)
             diffuse_color_im = np.power(diffuse_color_im + 1e-6, 1.0 / 2.2)
             specular_color_im = color_im - diffuse_color_im
+            nir_sparse = np.power(nir_sparse + 1e-6, 1.0 / 2.2)
 
         gt_color_im = gt_color_im[..., :3]
         normal_im = normal_im[..., :3]
         row1 = np.concatenate([gt_color_im, normal_im, edge_mask_im], axis=1)
-        row2 = np.concatenate([color_im, diffuse_color_im, specular_color_im], axis=1)
+        #row2 = np.concatenate([color_im, diffuse_color_im, specular_color_im], axis=1)
+
+        row2 = np.concatenate([color_im, diffuse_color_im, nir_sparse], axis=1)
+
         row3 = np.concatenate([diffuse_albedo_im, specular_albedo_im, specular_roughness_im], axis=1)
         im = np.concatenate((row1, row2, row3), axis=0)
         imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))

@@ -26,7 +26,7 @@ class Runner:
         f = open(self.conf_path)
         conf_text = f.read()
 
-        print(conf_text)
+        #print(conf_text)
         conf_text = conf_text.replace("CASE_NAME", case)
         f.close()
         print(conf_text)

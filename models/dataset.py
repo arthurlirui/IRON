@@ -49,6 +49,8 @@ class Dataset:
 
         self.camera_outside_sphere = conf.get_bool("camera_outside_sphere", default=True)
         # self.scale_mat_scale = conf.get_float('scale_mat_scale', default=1.1)  # not used
+        self.near = conf.get_float("near")
+        self.far = conf.get_float("far")
 
         import json
 
@@ -215,12 +217,15 @@ class Dataset:
         a = torch.sum(rays_d**2, dim=-1, keepdim=True)
         b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
         mid = 0.5 * (-b) / a
-        if True:
+        if False:
             near = mid - 1.0
             far = mid + 1.0
         if False:
             near = mid - 1.5
             far = mid + 0.5
+        if True:
+            near = mid + self.near
+            far = mid + self.far
         if False:
             near = 0.3 * torch.ones_like(mid)
             far = 1.5 * torch.ones_like(mid)
