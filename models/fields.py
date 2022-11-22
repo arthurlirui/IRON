@@ -4,6 +4,9 @@ import torch.nn.functional as F
 import numpy as np
 from models.embedder import get_embedder
 
+import json
+import tinycudann as tcnn
+
 
 class tinySDFNetwork():
     __author__ = 'Arthur'
@@ -245,7 +248,37 @@ class RenderingNetwork(nn.Module):
         return x
 
 
-# This implementation is borrowed from nerf-pytorch: https://github.com/yenchenlin/nerf-pytorch
+# Implementation for tiny-cuda-nn
+class TCNNNeRF(nn.Module):
+    def __init__(self, conf_path, n_input_dims=3, n_output_dims=4):
+        super(TCNNNeRF, self).__init__()
+        with open(conf_path) as f:
+            config = json.load(f)
+        self.pos_encoding = tcnn.Encoding(n_input_dims, config["encoding"])
+        self.pos_network = tcnn.Network(self.pos_encoding.n_output_dims, 1, config["network"])
+        self.pos_model = torch.nn.Sequential(self.pos_network)
+
+        self.dir_encoding = tcnn.Encoding(n_input_dims, config["dir_encoding"])
+
+        rgb_network_input_dims = self.pos_encoding.n_output_dims+self.dir_encoding.n_output_dims
+        self.rgb_network = tcnn.Network(rgb_network_input_dims, 3, config["network"])
+        self.rgb_model = torch.nn.Sequential(self.rgb_network)
+        #self.density_network = torch.nn.Sequential(self.pos_encoding, self.pos_network)
+        #self.cmodel = torch.nn.ModuleList([rgb_network_input_dims, ])
+        #self.model = tcnn.NetworkWithInputEncoding(n_input_dims, n_output_dims, config["encoding"], config["network"])
+
+    def parameters(self):
+        return list(self.rgb_model.parameters())+list(self.pos_model.parameters())
+
+    def forward(self, pos_inputs, dir_inputs):
+        pos_feat = self.pos_encoding(pos_inputs)
+        dir_feat = self.dir_encoding(dir_inputs)
+
+        density = self.pos_model(pos_feat)
+        rgb = self.rgb_model(torch.cat([pos_feat, dir_feat], dim=-1))
+        return rgb, density
+
+
 class NeRF(nn.Module):
     def __init__(
         self,
@@ -337,3 +370,7 @@ class SingleVarianceNetwork(nn.Module):
 
     def forward(self, x):
         return torch.ones([len(x), 1]) * torch.exp(self.variance * 10.0)
+
+
+if __name__ == '__main__':
+    pass

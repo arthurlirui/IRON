@@ -6,7 +6,6 @@ import logging
 import mcubes
 from icecream import ic
 
-
 def extract_fields(bound_min, bound_max, resolution, query_func):
     N = 64
     X = torch.linspace(bound_min[0], bound_max[0], resolution).split(N)
@@ -121,7 +120,17 @@ class NeuSRenderer:
         pts = pts.reshape(-1, 3 + int(self.n_outside > 0))
         dirs = dirs.reshape(-1, 3)
 
-        density, sampled_color = nerf(pts, dirs)
+        if False:
+            density, sampled_color = nerf(pts, dirs)
+        else:
+            #inputs = torch.cat([pts[:, :3], dirs], dim=-1)
+            inputs = pts[:, :3]
+            #print(inputs.shape)
+            #outputs = nerf.model(inputs)
+            #print(outputs.shape)
+            #density, sampled_color = outputs[:, 0:1], outputs[:, 1:]
+            sampled_color, density = nerf(pts[:, :3], dirs[:, :3])
+
         alpha = 1.0 - torch.exp(-F.softplus(density.reshape(batch_size, n_samples)) * dists)
         alpha = alpha.reshape(batch_size, n_samples)
         weights = alpha * torch.cumprod(torch.cat([torch.ones([batch_size, 1]), 1.0 - alpha + 1e-7], -1), -1)[:, :-1]
