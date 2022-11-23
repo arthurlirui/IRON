@@ -16,6 +16,66 @@ class tinySDFNetwork():
     def forward(self, inputs):
         pass
 
+
+class TCNNSDF(nn.Module):
+    def __init__(
+        self,
+        conf_path, n_inputs_dims=3, n_outputs_dims=1,
+        geometric_init=True,
+        weight_norm=True,
+        inside_outside=False,
+    ):
+        super(TCNNSDF, self).__init__()
+        with open(conf_path) as f:
+            config = json.load(f)
+
+        self.sdf_encoding = tcnn.Encoding(n_inputs_dims, config["encoding"])
+        self.sdf_network = tcnn.Network(self.sdf_encoding.n_output_dims, n_outputs_dims, config["network"])
+        self.model = torch.nn.Sequential(self.sdf_encoding, self.sdf_network)
+
+    def forward(self, inputs):
+        return self.model(inputs)
+
+    def sdf(self, x):
+        return self.forward(x)[..., :1]
+
+    def sdf_hidden_appearance(self, x):
+        return self.forward(x)
+
+    def gradient(self, x):
+        x.requires_grad_(True)
+        y = self.sdf(x)
+        d_output = torch.ones_like(y, requires_grad=False, device=y.device)
+        gradients = torch.autograd.grad(
+            outputs=y,
+            inputs=x,
+            grad_outputs=d_output,
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True,
+        )[0]
+        return gradients
+
+    def get_all(self, x, is_training=True):
+        with torch.enable_grad():
+            x.requires_grad_(True)
+            tmp = self.forward(x)
+            y, feature = tmp[..., :1], tmp[..., 1:]
+
+            d_output = torch.ones_like(y, requires_grad=False, device=y.device)
+            gradients = torch.autograd.grad(
+                outputs=y,
+                inputs=x,
+                grad_outputs=d_output,
+                create_graph=is_training,
+                retain_graph=is_training,
+                only_inputs=True,
+            )[0]
+        if not is_training:
+            return y.detach(), feature.detach(), gradients.detach()
+        return y, feature, gradients
+
+
 # This implementation is borrowed from IDR: https://github.com/lioryariv/idr
 class SDFNetwork(nn.Module):
     def __init__(
@@ -148,6 +208,22 @@ class SDFNetwork(nn.Module):
         return y, feature, gradients
 
 
+class TCNNRendering(nn.Module):
+    def __init__(self, conf_path, n_inputs_dims=3):
+        super(TCNNRendering, self).__init__()
+        with open(conf_path, 'r') as f:
+            config = json.load(f)
+
+        self.pts_encoding = tcnn.Encoding(n_inputs_dims, config["pts_encoding"])
+        self.dir_encoding = tcnn.Encoding(n_inputs_dims, config["dir_encoding"])
+        self.network = tcnn.Network(self.pts_encoding.n_output_dims, config["network"])
+
+    def forward(self, points, normals, view_dirs, feature_vectors):
+        pass
+
+
+
+
 # This implementation is borrowed from IDR: https://github.com/lioryariv/idr
 class RenderingNetwork(nn.Module):
     def __init__(
@@ -250,7 +326,7 @@ class RenderingNetwork(nn.Module):
 
 # Implementation for tiny-cuda-nn
 class TCNNNeRF(nn.Module):
-    def __init__(self, conf_path, n_input_dims=3, n_output_dims=4):
+    def __init__(self, conf_path, n_input_dims=3):
         super(TCNNNeRF, self).__init__()
         with open(conf_path) as f:
             config = json.load(f)
@@ -261,7 +337,7 @@ class TCNNNeRF(nn.Module):
         self.dir_encoding = tcnn.Encoding(n_input_dims, config["dir_encoding"])
 
         rgb_network_input_dims = self.pos_encoding.n_output_dims+self.dir_encoding.n_output_dims
-        self.rgb_network = tcnn.Network(rgb_network_input_dims, 3, config["network"])
+        self.rgb_network = tcnn.Network(rgb_network_input_dims, 3, config["rgb_network"])
         self.rgb_model = torch.nn.Sequential(self.rgb_network)
         #self.density_network = torch.nn.Sequential(self.pos_encoding, self.pos_network)
         #self.cmodel = torch.nn.ModuleList([rgb_network_input_dims, ])
