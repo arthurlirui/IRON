@@ -75,6 +75,54 @@ def sample_pdf(bins, weights, n_samples, det=False):
     return samples
 
 
+class NeRFRenderer:
+    def __init__(self, nerf, n_samples, n_importance, n_outside, up_sample_steps, perturb):
+        self.nerf = nerf
+        self.n_samples = n_samples
+        self.n_importance = n_importance
+        self.n_outside = n_outside
+        self.up_sample_steps = up_sample_steps
+        self.perturb = perturb
+
+    def render(self, rays_o, rays_d, near, far, background_dist=0, sample_dist=0.01, background_rgb=None, cos_anneal_ratio=None):
+        """
+        Render background
+        """
+        z_vals = torch.linspace(0.0, 1.0, self.n_samples)
+        z_vals = near + (far - near) * z_vals[None, :] + background_dist
+        z_vals = z_vals.expand(rays_o.shape[0], self.n_samples)
+        batch_size, n_samples = z_vals.shape
+
+        # Section length
+        dists = z_vals[..., 1:] - z_vals[..., :-1]
+        #dists = torch.cat([torch.zeros_like(z_vals[..., 0:1]), dists], dim=1)
+        #dists = torch.cat([dists, torch.Tensor([sample_dist]).expand(dists[..., :1].shape)], -1)
+        dists = torch.cat([dists, dists[..., 0:1]], dim=-1)
+        mid_z_vals = z_vals + dists * 0.5
+
+        # Section midpoints
+        pts = rays_o[:, None, :] + rays_d[:, None, :] * mid_z_vals[..., :, None]  # batch_size, n_samples, 3
+
+        #dis_to_center = torch.linalg.norm(pts, ord=2, dim=-1, keepdim=True).clip(1.0, 1e10)
+        #pts = torch.cat([pts / dis_to_center, 1.0 / dis_to_center], dim=-1)  # batch_size, n_samples, 4
+        dirs = rays_d[:, None, :].expand(batch_size, n_samples, 3)
+
+        pts = pts.reshape(-1, 3)
+        dirs = dirs.reshape(-1, 3)
+
+        sampled_color, density = self.nerf(pts[:, :3], dirs[:, :3])
+
+        alpha = 1.0 - torch.exp(-F.softplus(density.reshape(batch_size, n_samples)) * dists)
+        alpha = alpha.reshape(batch_size, n_samples)
+        weights = alpha * torch.cumprod(torch.cat([torch.ones([batch_size, 1]), 1.0 - alpha + 1e-7], -1), -1)[:, :-1]
+        sampled_color = sampled_color.reshape(batch_size, n_samples, 3)
+        zmap = (weights[:, :, None] * z_vals[:, :, None]).sum(dim=1)
+        color = (weights[:, :, None] * sampled_color).sum(dim=1)
+        if background_rgb is not None:
+            color = color + background_rgb * (1.0 - weights.sum(dim=-1, keepdim=True))
+        return {"color": color, "sampled_color": sampled_color, "zmap": zmap, "weights": weights}
+
+
 class NeuSRenderer:
     def __init__(
         self,
@@ -120,7 +168,7 @@ class NeuSRenderer:
         pts = pts.reshape(-1, 3 + int(self.n_outside > 0))
         dirs = dirs.reshape(-1, 3)
 
-        if False:
+        if True:
             density, sampled_color = nerf(pts, dirs)
         else:
             #inputs = torch.cat([pts[:, :3], dirs], dim=-1)

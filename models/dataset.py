@@ -224,8 +224,8 @@ class Dataset:
             near = mid - 1.5
             far = mid + 0.5
         if True:
-            near = mid + self.near
-            far = mid + self.far
+            near = self.near
+            far = self.far
         if False:
             near = 0.3 * torch.ones_like(mid)
             far = 1.5 * torch.ones_like(mid)
