@@ -103,16 +103,19 @@ class NeRFRenderer:
         # Section midpoints
         pts = rays_o[:, None, :] + rays_d[:, None, :] * mid_z_vals[..., :, None]  # batch_size, n_samples, 3
 
-        #dis_to_center = torch.linalg.norm(pts, ord=2, dim=-1, keepdim=True).clip(1.0, 1e10)
+        dis_to_center = torch.linalg.norm(pts, ord=2, dim=-1, keepdim=True).clip(1.0, 1e10)
         #pts = torch.cat([pts / dis_to_center, 1.0 / dis_to_center], dim=-1)  # batch_size, n_samples, 4
+        pts = pts / dis_to_center
         dirs = rays_d[:, None, :].expand(batch_size, n_samples, 3)
 
+        #pts = pts[:, :3]
         pts = pts.reshape(-1, 3)
         dirs = dirs.reshape(-1, 3)
 
         sampled_color, density = self.nerf(pts[:, :3], dirs[:, :3])
 
         alpha = 1.0 - torch.exp(-F.softplus(density.reshape(batch_size, n_samples)) * dists)
+        #alpha = 1.0 - torch.exp(density.reshape(batch_size, n_samples) * dists)
         alpha = alpha.reshape(batch_size, n_samples)
         weights = alpha * torch.cumprod(torch.cat([torch.ones([batch_size, 1]), 1.0 - alpha + 1e-7], -1), -1)[:, :-1]
         sampled_color = sampled_color.reshape(batch_size, n_samples, 3)

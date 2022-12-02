@@ -10,6 +10,8 @@ from scipy.spatial.transform import Slerp
 import traceback
 import imageio
 
+import json
+
 
 # This function is borrowed from IDR: https://github.com/lioryariv/idr
 def load_K_Rt_from_P(filename, P=None):
@@ -52,7 +54,7 @@ class Dataset:
         self.near = conf.get_float("near")
         self.far = conf.get_float("far")
 
-        import json
+        #import json
 
         #camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict_norm.json")))
         #if os.path.exists(os.path.join(self.data_dir, "cam_dict.json")):
@@ -149,6 +151,34 @@ class Dataset:
 
         print("Load data: End")
 
+    def load_IRON_dict(self, filename='cam_dict_norm.json'):
+        camera_dict = json.load(open(os.path.join(self.data_dir, filename)))
+        for x in list(camera_dict.keys()):
+            x = x[:-4] + ".png"
+            camera_dict[x]["K"] = np.array(camera_dict[x]["K"]).reshape((4, 4))
+            camera_dict[x]["W2C"] = np.array(camera_dict[x]["W2C"]).reshape((4, 4))
+        return camera_dict
+
+    def load_TCNN_dict(self, filename='transforms.json'):
+        camera_dict_raw = json.load(open(os.path.join(self.data_dir, filename)))
+        fx = camera_dict_raw['fl_x']
+        fy = camera_dict_raw['fl_y']
+        cx = camera_dict_raw['cx']
+        cy = camera_dict_raw['cy']
+        K = np.array([[fx, 0, cx, 0], [0, fy, cx, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        camera_dict = {}
+        for frame in camera_dict_raw['frames']:
+            file_path = frame['file_path']
+            x = os.path.basename(file_path)
+            transform_matrix = frame['transform_matrix']
+            C2W = transform_matrix
+            camera_dict[x]['K'] = K
+            camera_dict[x]['C2W'] = C2W
+        return camera_dict
+
+
+
+
     def gen_rays_at(self, img_idx, resolution_level=1):
         """
         Generate rays at world space from one camera.
@@ -217,6 +247,12 @@ class Dataset:
         a = torch.sum(rays_d**2, dim=-1, keepdim=True)
         b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
         mid = 0.5 * (-b) / a
+
+        if False:
+            near = mid + self.near
+            far = mid + self.far
+            #print(near, far)
+
         if False:
             near = mid - 1.0
             far = mid + 1.0
@@ -233,8 +269,6 @@ class Dataset:
             print(mid-1.0, mid+1.0)
             near = torch.maximum(mid - 1.0, 0.05*torch.ones_like(mid))
             far = torch.minimum(mid + 1.0, 2.0*torch.ones_like(mid))
-        #near = 0.1
-        #far = 2.0
         return near, far
 
     def image_at(self, idx, resolution_level):

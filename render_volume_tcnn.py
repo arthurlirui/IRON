@@ -13,9 +13,12 @@ from icecream import ic
 from tqdm import tqdm
 from pyhocon import ConfigFactory
 from models.dataset import Dataset
-from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
-from models.fields import TCNNNeRF, TCNNSDF
+#from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
+from models.tcnn_fields import TCNNNeRF, TCNNSDF
 from models.renderer import NeuSRenderer, NeRFRenderer
+from pprint import pprint
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 def read_conf(conf_path, case='CASE_NAME'):
@@ -70,10 +73,13 @@ class TCNNRunner:
         self.model_list = []
         self.writer = None
 
+        pprint(self.conf)
+
         # Networks
         params_to_train = []
         #self.nerf_outside = NeRF(**self.conf["model.nerf"]).to(self.device)
-        if self.use_background:
+        #if self.use_background:
+        if True:
             self.nerf_outside = TCNNNeRF(conf_path=self.conf["scene.nerf_path"])
             params_to_train += list(self.nerf_outside.parameters())
             print(self.nerf_outside)
@@ -85,10 +91,11 @@ class TCNNRunner:
             print(self.sdf_network)
 
         if self.use_envmap:
-            self.deviation_network = SingleVarianceNetwork(**self.conf["model.variance_network"]).to(self.device)
-            self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
-            params_to_train += list(self.deviation_network.parameters())
-            params_to_train += list(self.color_network.parameters())
+            #self.deviation_network = SingleVarianceNetwork(**self.conf["model.variance_network"]).to(self.device)
+            #self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
+            #params_to_train += list(self.deviation_network.parameters())
+            #params_to_train += list(self.color_network.parameters())
+            pass
 
         self.optimizer = torch.optim.Adam(params_to_train, lr=self.learning_rate)
 
@@ -153,6 +160,15 @@ class TCNNRunner:
                 background_rgb=background_rgb,
                 cos_anneal_ratio=self.get_cos_anneal_ratio(),
             )
+            #print(self.renderer.nerf.parameters())
+            if False and iter_i % 100 == 0:
+                #print(self.renderer.nerf.parameters()[0])
+                #print(self.renderer.nerf.parameters()[1].shape)
+                para = self.renderer.nerf.parameters()[0].detach().cpu().numpy()
+                counts, bins = np.histogram(para)
+                plt.stairs(counts, bins)
+                plt.show()
+
             #{"color": color, "sampled_color": sampled_color, "alpha": alpha, "weights": weights}
             color_fine = render_out["color"]
             #alpha = render_out['alpha']
@@ -166,11 +182,11 @@ class TCNNRunner:
             color_error = (color_fine - true_rgb) * mask
 
             # previous
-            #color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
+            color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
 
             # Arthur
             #color_fine_loss = F.l2_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
-            color_fine_loss = F.mse_loss(color_fine * mask, true_rgb * mask, reduction='sum') / mask_sum
+            #color_fine_loss = F.mse_loss(color_fine * mask, true_rgb * mask, reduction='sum') / mask_sum
 
             psnr = 20.0 * torch.log10(1.0 / (((color_fine - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
 

@@ -218,28 +218,53 @@ class TCNNNeRF(nn.Module):
         with open(conf_path) as f:
             config = json.load(f)
         self.pos_encoding = tcnn.Encoding(n_input_dims, config["encoding"])
-        self.pos_network = tcnn.Network(self.pos_encoding.n_output_dims, 1, config["network"])
-        self.pos_model = torch.nn.Sequential(self.pos_network)
+        self.density_network = tcnn.Network(self.pos_encoding.n_output_dims, 1, config["network"])
+        #self.density_model = torch.nn.Sequential(self.density_network)
+        self.density_model = self.density_network
 
         self.dir_encoding = tcnn.Encoding(n_input_dims, config["dir_encoding"])
 
-        rgb_network_input_dims = self.pos_encoding.n_output_dims+self.dir_encoding.n_output_dims
+        rgb_network_input_dims = self.dir_encoding.n_output_dims+self.dir_encoding.n_output_dims
         self.rgb_network = tcnn.Network(rgb_network_input_dims, 3, config["rgb_network"])
-        self.rgb_model = torch.nn.Sequential(self.rgb_network)
+        #self.rgb_model = torch.nn.Sequential(self.rgb_network)
+        self.rgb_model = self.rgb_network
         #self.density_network = torch.nn.Sequential(self.pos_encoding, self.pos_network)
         #self.cmodel = torch.nn.ModuleList([rgb_network_input_dims, ])
         #self.model = tcnn.NetworkWithInputEncoding(n_input_dims, n_output_dims, config["encoding"], config["network"])
 
     def parameters(self):
         tt = []
-        tt += list(self.pos_model.parameters())
+        tt += list(self.density_model.parameters())
         tt += list(self.rgb_model.parameters())
         return tt
 
     def forward(self, pos_inputs, dir_inputs):
         pos_feat = self.pos_encoding(pos_inputs)
-        dir_feat = self.dir_encoding(dir_inputs)
+        density = self.density_model(pos_feat)
 
-        density = self.pos_model(pos_feat)
-        rgb = self.rgb_model(torch.cat([pos_feat, dir_feat], dim=-1))
+        dir_feat = self.dir_encoding(dir_inputs)
+        pos_feat2 = self.dir_encoding(pos_inputs)
+
+        rgb = self.rgb_model(torch.cat([pos_feat2, dir_feat], dim=-1))
         return rgb, density
+
+
+if __name__ == '__main__':
+    batch_size = 512
+    num_sample = 100
+    device = 'cuda:0'
+    ray_o, ray_d = torch.randn([batch_size, 3], device=device), torch.randn([batch_size, 3], device=device)
+    z_vals = torch.linspace(start=0.0, end=1.0, steps=num_sample, device=device)
+    near, far = 1.0, 2.0
+    z_vals = near + (far - near) * z_vals[None, :]
+    pts = ray_o[:, None, :] + ray_d[:, None, :] * z_vals[:, :, None]
+    print(pts.shape)
+    dirs = ray_d[:, None, :].expand(pts.shape)
+    pos_sampled = torch.randn([batch_size, num_sample, 3], device='cuda:0')
+    #dir_sampled = torch.randn([batch_size, 1, 3], device='cuda:0')
+    #dir_sampled = dir_sampled.expand(pos_sampled.shape)
+    #print(dir_sampled.shape)
+    model = TCNNNeRF(conf_path='./confs/base.json', n_input_dims=3)
+    pts, dirs = pts.reshape(-1, 3), dirs.reshape(-1, 3)
+    rgb, density = model(pos_inputs=pts, dir_inputs=dirs)
+    print(rgb.shape, density.shape)
