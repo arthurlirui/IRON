@@ -10,6 +10,7 @@ from scipy.spatial.transform import Slerp
 import traceback
 import imageio
 import cv2
+import pyexr
 
 import json
 
@@ -39,6 +40,39 @@ def load_K_Rt_from_P(filename, P=None):
     return intrinsics, pose
 
 
+def image_reader(reader_name='imageio'):
+    if reader_name == 'imageio':
+        def image_imageio(im_name):
+            return imageio.v3.imread(im_name)[:, :, :3]
+        return image_imageio
+    if reader_name == 'opencv':
+        def image_opencv(im_name):
+            return cv2.imread(im_name)[:, :, :3][:, :, ::-1]
+        return image_opencv
+    else:
+        return None
+
+
+def exr_reader(reader_name='pyexr'):
+    if reader_name == 'pyexr':
+        def pyexr_reader(im_name):
+            return np.power(pyexr.open(im_name).get()[:, :, ::-1], 1.0 / 2.2)
+        return pyexr_reader
+
+
+def image_writer(writer_name='imageio'):
+    if writer_name == 'imageio':
+        def writer_imageio(outpath, img):
+            return imageio.v3.imwrite(outpath, img)
+        return writer_imageio
+    if writer_name == 'opencv':
+        def writer_opencv(outpath, img):
+            return cv2.imwrite(outpath, img)
+        return writer_opencv
+    else:
+        return None
+
+
 class Dataset:
     def __init__(self, conf):
         super(Dataset, self).__init__()
@@ -57,43 +91,46 @@ class Dataset:
         self.image_reader_exr = conf.get_string("image_reader_exr", default='pyexr')
 
         # initial image reader: use same image reader for any place
-        if self.image_reader == 'imageio':
-            def image_imageio(im_name):
-                return imageio.v3.imread(im_name)[:, :, :3]
-            self.image_reader = lambda im_name: image_imageio(im_name)
-        elif self.image_reader == 'opencv':
-            def image_opencv(im_name):
-                return cv2.imread(im_name)[:, :, :3][:, :, ::-1]
-            self.image_reader = lambda im_name: image_opencv(im_name)
-        else:
-            self.image_reader = None
+        self.image_reader = image_reader(reader_name='imageio')
+        # if self.image_reader == 'imageio':
+        #     def image_imageio(im_name):
+        #         return imageio.v3.imread(im_name)[:, :, :3]
+        #
+        #     self.image_reader = lambda im_name: image_imageio(im_name)
+        # elif self.image_reader == 'opencv':
+        #     def image_opencv(im_name):
+        #         return cv2.imread(im_name)[:, :, :3][:, :, ::-1]
+        #
+        #     self.image_reader = lambda im_name: image_opencv(im_name)
+        # else:
+        #     self.image_reader = None
 
         if self.image_reader_exr == 'imageio':
             pass
         elif self.image_reader_exr == 'pyexr':
             pass
 
-
         if self.image_writer == 'imageio':
             def writer_imageio(outpath, img):
                 return imageio.v3.imwrite(outpath, img)
+
             self.image_writer = lambda outpath, img: writer_imageio(outpath, img)
         elif self.image_writer == 'opencv':
             def writer_opencv(outpath, img):
                 return cv2.imwrite(outpath, img)
+
             self.image_writer = lambda outpath, img: writer_opencv(outpath, img)
         else:
             self.image_writer = None
 
-
         # self.scale_mat_scale = conf.get_float('scale_mat_scale', default=1.1)  # not used
-        #self.near = conf.get_float("near")
-        #self.far = conf.get_float("far")
+        # self.near = conf.get_float("near")
+        # self.far = conf.get_float("far")
 
-        #import json
+        # import json
 
-        #camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict_norm.json")))
-        #if os.path.exists(os.path.join(self.data_dir, "cam_dict.json")):
+        # camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict_norm.json")))
+        # if os.path.exists(os.path.join(self.data_dir, "cam_dict.json")):
         if False:
             camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict.json")))
         else:
@@ -110,7 +147,7 @@ class Dataset:
             self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.png")))
             self.n_images = len(self.images_lis)
             self.images_np = np.stack([self.image_reader(im_name) for im_name in self.images_lis]) / 255.0
-            #print('min max:', np.min(self.images_np[:]), np.max(self.images_np[:]))
+            # print('min max:', np.min(self.images_np[:]), np.max(self.images_np[:]))
         except:
             # traceback.print_exc()
 
@@ -120,7 +157,8 @@ class Dataset:
                 self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
                 self.n_images = len(self.images_lis)
                 self.images_np = np.clip(
-                    np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]), 1.0 / 2.2),
+                    np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]),
+                             1.0 / 2.2),
                     0.0,
                     1.0,
                 )
@@ -212,9 +250,6 @@ class Dataset:
             camera_dict[x]['C2W'] = C2W
         return camera_dict
 
-
-
-
     def gen_rays_at(self, img_idx, resolution_level=1):
         """
         Generate rays at world space from one camera.
@@ -242,7 +277,7 @@ class Dataset:
         p = torch.matmul(self.intrinsics_all_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # batch_size, 3
         rays_v = torch.matmul(self.pose_all[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
-        #rays_v = rays_v * -1
+        # rays_v = rays_v * -1
         rays_o = self.pose_all[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
         return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()  # batch_size, 10
 
@@ -280,14 +315,14 @@ class Dataset:
         return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
 
     def near_far_from_sphere(self, rays_o, rays_d):
-        a = torch.sum(rays_d**2, dim=-1, keepdim=True)
+        a = torch.sum(rays_d ** 2, dim=-1, keepdim=True)
         b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
         mid = 0.5 * (-b) / a
 
         if True:
             near = mid - 1.0
             far = mid + 1.0
-            #print(near, far)
+            # print(near, far)
 
         if False:
             near = mid - 1.0
@@ -302,9 +337,9 @@ class Dataset:
             near = 0.3 * torch.ones_like(mid)
             far = 1.5 * torch.ones_like(mid)
         if False:
-            print(mid-1.0, mid+1.0)
-            near = torch.maximum(mid - 1.0, 0.05*torch.ones_like(mid))
-            far = torch.minimum(mid + 1.0, 2.0*torch.ones_like(mid))
+            print(mid - 1.0, mid + 1.0)
+            near = torch.maximum(mid - 1.0, 0.05 * torch.ones_like(mid))
+            far = torch.minimum(mid + 1.0, 2.0 * torch.ones_like(mid))
         return near, far
 
     def image_at(self, idx, resolution_level):
