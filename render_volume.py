@@ -330,29 +330,43 @@ class Runner:
                 if False:
                     print(img_fine[..., i].shape)
                     print(self.dataset.image_at(idx, resolution_level=resolution_level).shape)
-                cv.imwrite(
-                    os.path.join(
-                        self.base_exp_dir,
-                        "validations_fine",
-                        "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx),
-                    ),
-
-                    np.concatenate(
-                        [
-                            img_fine[..., i],
-                            self.dataset.image_at(idx, resolution_level=resolution_level)[:, :, :3],
-                        ]
-                    ),
-                )
+                img_path = os.path.join(
+                    self.base_exp_dir,
+                    "validations_fine",
+                    "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
+                img = np.concatenate(
+                    [
+                        img_fine[..., i],
+                        self.dataset.image_at(idx, resolution_level=resolution_level)[:, :, :3]
+                    ], axis=0).astype('uint8')
+                print(img.shape)
+                self.dataset.image_writer(img_path, img)
+                # cv.imwrite(
+                #     os.path.join(
+                #         self.base_exp_dir,
+                #         "validations_fine",
+                #         "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx),
+                #     ),
+                #
+                #     np.concatenate(
+                #         [
+                #             img_fine[..., i],
+                #             self.dataset.image_at(idx, resolution_level=resolution_level)[:, :, :3],
+                #         ]
+                #     ),
+                # )
             if len(out_normal_fine) > 0:
-                cv.imwrite(
-                    os.path.join(
-                        self.base_exp_dir,
-                        "normals",
-                        "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx),
-                    ),
-                    normal_img[..., i],
-                )
+                normal_path = os.path.join(self.base_exp_dir,
+                                           "normals", "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
+                self.dataset.normal_writer(normal_path, normal_img[..., i])
+                # cv.imwrite(
+                #     os.path.join(
+                #         self.base_exp_dir,
+                #         "normals",
+                #         "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx),
+                #     ),
+                #     normal_img[..., i],
+                # )
 
     def render_novel_image(self, idx_0, idx_1, ratio, resolution_level):
         """

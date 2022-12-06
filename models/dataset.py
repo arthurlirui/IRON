@@ -49,15 +49,29 @@ def image_reader(reader_name='imageio'):
         def image_opencv(im_name):
             return cv2.imread(im_name)[:, :, :3][:, :, ::-1]
         return image_opencv
-    else:
-        return None
 
 
 def exr_reader(reader_name='pyexr'):
     if reader_name == 'pyexr':
         def pyexr_reader(im_name):
-            return np.power(pyexr.open(im_name).get()[:, :, ::-1], 1.0 / 2.2)
+            img = np.power(pyexr.open(im_name).get()[:, :, :3], 1.0 / 2.2)
+            #img = img[:, :, ::-1]
+            return img
         return pyexr_reader
+
+
+def exr_writer(writer_name='pyexr'):
+    if writer_name == 'pyexr':
+        def pyexr_writer(outpath, img):
+            return pyexr.write(outpath, img)
+        return pyexr_writer
+
+
+def normal_writer(writer_name='pyexr'):
+    if writer_name == 'pyexr':
+        def pyexr_writer(outpath, normal):
+            return pyexr.write(outpath, normal, channel_names=['X', 'Y', 'Z'])
+        return pyexr_writer
 
 
 def image_writer(writer_name='imageio'):
@@ -69,8 +83,6 @@ def image_writer(writer_name='imageio'):
         def writer_opencv(outpath, img):
             return cv2.imwrite(outpath, img)
         return writer_opencv
-    else:
-        return None
 
 
 class Dataset:
@@ -86,12 +98,13 @@ class Dataset:
 
         self.camera_outside_sphere = conf.get_bool("camera_outside_sphere", default=True)
 
-        self.image_reader = conf.get_string("image_reader", default='imageio')
-        self.image_writer = conf.get_string("image_reader", default='imageio')
-        self.image_reader_exr = conf.get_string("image_reader_exr", default='pyexr')
+        #self.image_reader = conf.get_string("image_reader", default='imageio')
+        #self.image_writer = conf.get_string("image_reader", default='imageio')
+        #self.image_reader_exr = conf.get_string("image_reader_exr", default='pyexr')
 
         # initial image reader: use same image reader for any place
         self.image_reader = image_reader(reader_name='imageio')
+        self.image_writer = image_writer(writer_name='imageio')
         # if self.image_reader == 'imageio':
         #     def image_imageio(im_name):
         #         return imageio.v3.imread(im_name)[:, :, :3]
@@ -104,24 +117,22 @@ class Dataset:
         #     self.image_reader = lambda im_name: image_opencv(im_name)
         # else:
         #     self.image_reader = None
+        self.exr_reader = exr_reader(reader_name='pyexr')
+        self.exr_writer = exr_writer(writer_name='pyexr')
+        self.normal_writer = exr_writer(writer_name='pyexr')
 
-        if self.image_reader_exr == 'imageio':
-            pass
-        elif self.image_reader_exr == 'pyexr':
-            pass
-
-        if self.image_writer == 'imageio':
-            def writer_imageio(outpath, img):
-                return imageio.v3.imwrite(outpath, img)
-
-            self.image_writer = lambda outpath, img: writer_imageio(outpath, img)
-        elif self.image_writer == 'opencv':
-            def writer_opencv(outpath, img):
-                return cv2.imwrite(outpath, img)
-
-            self.image_writer = lambda outpath, img: writer_opencv(outpath, img)
-        else:
-            self.image_writer = None
+        # if self.image_writer == 'imageio':
+        #     def writer_imageio(outpath, img):
+        #         return imageio.v3.imwrite(outpath, img)
+        #
+        #     self.image_writer = lambda outpath, img: writer_imageio(outpath, img)
+        # elif self.image_writer == 'opencv':
+        #     def writer_opencv(outpath, img):
+        #         return cv2.imwrite(outpath, img)
+        #
+        #     self.image_writer = lambda outpath, img: writer_opencv(outpath, img)
+        # else:
+        #     self.image_writer = None
 
         # self.scale_mat_scale = conf.get_float('scale_mat_scale', default=1.1)  # not used
         # self.near = conf.get_float("near")
@@ -150,23 +161,23 @@ class Dataset:
             # print('min max:', np.min(self.images_np[:]), np.max(self.images_np[:]))
         except:
             # traceback.print_exc()
-
             print("Loading png images failed; try loading exr images")
             if False:
                 import pyexr
                 self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
                 self.n_images = len(self.images_lis)
-                self.images_np = np.clip(
-                    np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]),
-                             1.0 / 2.2),
-                    0.0,
-                    1.0,
-                )
+                # self.images_np = np.clip(
+                #     np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]),
+                #              1.0 / 2.2),
+                #     0.0,
+                #     1.0,
+                # )
+                self.images_np = np.clip(np.stack([self.exr_reader(im_name) for im_name in self.images_lis]), 0.0, 1.0)
             else:
-                import imageio
+                #import imageio
                 self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
                 self.n_images = len(self.images_lis)
-                self.images_np = np.stack([self.image_reader_exr(im_name) for im_name in self.images_lis])
+                self.images_np = np.stack([self.exr_reader(im_name) for im_name in self.images_lis])
 
         no_mask = True
         if no_mask:
@@ -344,11 +355,12 @@ class Dataset:
 
     def image_at(self, idx, resolution_level):
         if self.images_lis[idx].endswith(".exr"):
-            if False:
-                import pyexr
-                img = np.power(pyexr.open(self.images_lis[idx]).get()[:, :, ::-1], 1.0 / 2.2) * 255.0
-            else:
-                img = imageio.v3.imread(self.images_lis[idx])
-        else:
-            img = cv.imread(self.images_lis[idx])
+            img = np.clip(self.exr_reader(self.images_lis[idx])*256, 0, 255)
+            # if False:
+            #     import pyexr
+            #     img = np.power(pyexr.open(self.images_lis[idx]).get()[:, :, ::-1], 1.0 / 2.2) * 255.0
+            # else:
+            #     img = imageio.v3.imread(self.images_lis[idx])
+        if self.images_lis[idx].endswith(".png"):
+            img = self.image_reader(self.images_lis[idx])
         return (cv.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255).astype(np.uint8)

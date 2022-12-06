@@ -472,21 +472,31 @@ class TCNNRunner:
                 if False:
                     print(img_fine[..., i].shape)
                     print(self.dataset.image_at(idx, resolution_level=resolution_level).shape)
-                cv.imwrite(
-                    os.path.join(
-                        self.base_exp_dir,
-                        "validations_fine",
-                        "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx),
-                    ),
-
-                    np.concatenate(
-                        [
-                            img_fine[..., i],
-                            self.dataset.image_at(idx, resolution_level=resolution_level)[:, :, :3],
-                            np.concatenate([img_zmap[..., i], img_zmap[..., i], img_zmap[..., i]], axis=-1),
-                        ]
-                    ),
-                )
+                img_path = os.path.join(
+                    self.base_exp_dir,
+                    "validations_fine",
+                    "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
+                img = np.concatenate(
+                    [
+                        img_fine[..., i],
+                        self.dataset.image_at(idx, resolution_level=resolution_level)[:, :, :3]
+                    ], axis=0).astype('uint8')
+                self.dataset.image_writer(img_path, img)
+                # cv.imwrite(
+                #     os.path.join(
+                #         self.base_exp_dir,
+                #         "validations_fine",
+                #         "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx),
+                #     ),
+                #
+                #     np.concatenate(
+                #         [
+                #             img_fine[..., i],
+                #             self.dataset.image_at(idx, resolution_level=resolution_level)[:, :, :3],
+                #             np.concatenate([img_zmap[..., i], img_zmap[..., i], img_zmap[..., i]], axis=-1),
+                #         ]
+                #     ),
+                # )
             if len(out_normal_fine) > 0:
                 cv.imwrite(
                     os.path.join(
