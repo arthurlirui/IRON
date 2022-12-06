@@ -9,6 +9,7 @@ from scipy.spatial.transform import Rotation as Rot
 from scipy.spatial.transform import Slerp
 import traceback
 import imageio
+import cv2
 
 import json
 
@@ -50,9 +51,44 @@ class Dataset:
         self.object_cameras_name = conf.get_string("object_cameras_name")
 
         self.camera_outside_sphere = conf.get_bool("camera_outside_sphere", default=True)
+
+        self.image_reader = conf.get_string("image_reader", default='imageio')
+        self.image_writer = conf.get_string("image_reader", default='imageio')
+        self.image_reader_exr = conf.get_string("image_reader_exr", default='pyexr')
+
+        # initial image reader: use same image reader for any place
+        if self.image_reader == 'imageio':
+            def image_imageio(im_name):
+                return imageio.v3.imread(im_name)[:, :, :3]
+            self.image_reader = lambda im_name: image_imageio(im_name)
+        elif self.image_reader == 'opencv':
+            def image_opencv(im_name):
+                return cv2.imread(im_name)[:, :, :3][:, :, ::-1]
+            self.image_reader = lambda im_name: image_opencv(im_name)
+        else:
+            self.image_reader = None
+
+        if self.image_reader_exr == 'imageio':
+            pass
+        elif self.image_reader_exr == 'pyexr':
+            pass
+
+
+        if self.image_writer == 'imageio':
+            def writer_imageio(outpath, img):
+                return imageio.v3.imwrite(outpath, img)
+            self.image_writer = lambda outpath, img: writer_imageio(outpath, img)
+        elif self.image_writer == 'opencv':
+            def writer_opencv(outpath, img):
+                return cv2.imwrite(outpath, img)
+            self.image_writer = lambda outpath, img: writer_opencv(outpath, img)
+        else:
+            self.image_writer = None
+
+
         # self.scale_mat_scale = conf.get_float('scale_mat_scale', default=1.1)  # not used
-        self.near = conf.get_float("near")
-        self.far = conf.get_float("far")
+        #self.near = conf.get_float("near")
+        #self.far = conf.get_float("far")
 
         #import json
 
@@ -73,7 +109,7 @@ class Dataset:
         try:
             self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.png")))
             self.n_images = len(self.images_lis)
-            self.images_np = np.stack([cv.imread(im_name) for im_name in self.images_lis]) / 255.0
+            self.images_np = np.stack([self.image_reader(im_name) for im_name in self.images_lis]) / 255.0
             #print('min max:', np.min(self.images_np[:]), np.max(self.images_np[:]))
         except:
             # traceback.print_exc()
@@ -92,7 +128,7 @@ class Dataset:
                 import imageio
                 self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
                 self.n_images = len(self.images_lis)
-                self.images_np = np.stack([imageio.v3.imread(im_name) for im_name in self.images_lis])
+                self.images_np = np.stack([self.image_reader_exr(im_name) for im_name in self.images_lis])
 
         no_mask = True
         if no_mask:
@@ -248,9 +284,9 @@ class Dataset:
         b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
         mid = 0.5 * (-b) / a
 
-        if False:
-            near = mid + self.near
-            far = mid + self.far
+        if True:
+            near = mid - 1.0
+            far = mid + 1.0
             #print(near, far)
 
         if False:
@@ -259,7 +295,7 @@ class Dataset:
         if False:
             near = mid - 1.5
             far = mid + 0.5
-        if True:
+        if False:
             near = self.near
             far = self.far
         if False:
