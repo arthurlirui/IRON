@@ -12,7 +12,7 @@ import imageio
 import cv2
 import pyexr
 import json
-from normalize_cam_dict import get_tf_cams, normalize_cam_dict
+from models.normalize_cam_dict import get_tf_cams, normalize_cam_dict, get_tf_cams_list
 
 
 # This function is borrowed from IDR: https://github.com/lioryariv/idr
@@ -55,7 +55,6 @@ def exr_reader(reader_name='pyexr'):
     if reader_name == 'pyexr':
         def pyexr_reader(im_name):
             img = np.power(pyexr.open(im_name).get()[:, :, :3], 1.0 / 2.2)
-            #img = img[:, :, ::-1]
             return img
         return pyexr_reader
 
@@ -367,16 +366,15 @@ class Dataset:
 
 
 class DatasetNIRRGB:
-    def __init__(self, conf):
+    def __init__(self, conf, dataset_type='nir'):
         super(DatasetNIRRGB, self).__init__()
         print("Loading NIR RGB data: Begin")
         self.device = torch.device("cuda")
         self.conf = conf
 
-        self.data_dir = conf.get_string("data_dir")
-
         self.data_rgb_dir = conf.get_string('rgb_dir')
         self.data_nir_dir = conf.get_string('nir_dir')
+        self.data_dir = conf.get_string("data_dir")
 
         self.render_cameras_name = conf.get_string("render_cameras_name")
         self.object_cameras_name = conf.get_string("object_cameras_name")
@@ -391,58 +389,103 @@ class DatasetNIRRGB:
         self.normal_writer = exr_writer(writer_name='pyexr')
 
         # load NIR and RGB dataset
-        rgb_camera_dict = json.load(open(os.path.join(self.data_rgb_dir, "cam_dict.json")))
-        nir_camera_dict = json.load(open(os.path.join(self.data_nir_dir, "cam_dict.json")))
+        #cam_dict_list = []
+        if False:
+            if os.path.exists(os.path.join(self.data_rgb_dir, "cam_dict.json")):
+                rgb_camera_dict = json.load(open(os.path.join(self.data_rgb_dir, "cam_dict.json")))
+                self.rgb_camera_dict = rgb_camera_dict
+                cam_dict_list.append(rgb_camera_dict)
+            if os.path.exists(os.path.join(self.data_nir_dir, "cam_dict.json")):
+                nir_camera_dict = json.load(open(os.path.join(self.data_nir_dir, "cam_dict.json")))
+                self.nir_camera_dict = nir_camera_dict
+                cam_dict_list.append(nir_camera_dict)
+        if True:
+            self.camera_dict = None
+            if os.path.exists(os.path.join(self.data_dir, 'cam_dict.json')):
+                with open(os.path.join(self.data_dir, 'cam_dict.json')) as f:
+                    camera_dict = json.load(fp=f)
+                    #cam_dict_list.extend(camera_dict)
+                    self.camera_dict = camera_dict
 
-        # process translation and scale
+        target_radius = 1.0
+        translate, scale = get_tf_cams(self.camera_dict, target_radius=target_radius)
 
-        # if False:
-        #     camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict.json")))
-        # else:
-        #     camera_dict = json.load(open(os.path.join(self.data_dir, "cam_dict_norm.json")))
-        for x in list(rgb_camera_dict.keys()):
-            x = x[:-4] + ".png"
-            rgb_camera_dict[x]["K"] = np.array(rgb_camera_dict[x]["K"]).reshape((4, 4))
-            rgb_camera_dict[x]["W2C"] = np.array(rgb_camera_dict[x]["W2C"]).reshape((4, 4))
-
-        for x in list(nir_camera_dict.keys()):
-            x = x[:-4] + ".png"
-            nir_camera_dict[x]["K"] = np.array(nir_camera_dict[x]["K"]).reshape((4, 4))
-            nir_camera_dict[x]["W2C"] = np.array(nir_camera_dict[x]["W2C"]).reshape((4, 4))
-
-        self.camera_dict = camera_dict
-
-        folder_name = self.conf['folder_name'] if 'folder_name' in self.conf else 'image'
-        try:
-            self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.png")))
-            self.n_images = len(self.images_lis)
-            self.images_np = np.stack([self.image_reader(im_name) for im_name in self.images_lis]) / 255.0
-            # print('min max:', np.min(self.images_np[:]), np.max(self.images_np[:]))
-        except:
-            # traceback.print_exc()
-            print("Loading png images failed; try loading exr images")
-            if False:
-                import pyexr
-                self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
-                self.n_images = len(self.images_lis)
-                # self.images_np = np.clip(
-                #     np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]),
-                #              1.0 / 2.2),
-                #     0.0,
-                #     1.0,
-                # )
-                self.images_np = np.clip(np.stack([self.exr_reader(im_name) for im_name in self.images_lis]), 0.0, 1.0)
+        if False:
+            self.dataset_type = dataset_type
+            if self.dataset_type == 'nir':
+                camera_dict = nir_camera_dict
+                self.data_dir = self.data_nir_dir
+            elif self.dataset_type == 'rgb':
+                camera_dict = rgb_camera_dict
+                self.data_dir = self.data_rgb_dir
             else:
-                #import imageio
-                self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
-                self.n_images = len(self.images_lis)
-                self.images_np = np.stack([self.exr_reader(im_name) for im_name in self.images_lis])
+                pass
+
+        for x in list(self.camera_dict.keys()):
+            x = x if x.endswith('png') else x[:4] + '.png'
+            #x = x[:-4] + ".png"
+            self.camera_dict[x]["K"] = np.array(self.camera_dict[x]["K"]).reshape((4, 4))
+            self.camera_dict[x]["W2C"] = np.array(self.camera_dict[x]["W2C"]).reshape((4, 4))
+
+        #self.camera_dict = camera_dict_list
+
+        for img_name in self.camera_dict:
+            W2C = np.array(self.camera_dict[img_name]['W2C']).reshape((4, 4))
+            W2C = self.transform_pose(W2C, translate, scale)
+            assert (np.isclose(np.linalg.det(W2C[:3, :3]), 1.))
+            #self.camera_dict[img_name]['W2C'] = list(W2C.flatten())
+            self.camera_dict[img_name]['W2C'] = W2C
+
+        print(self.camera_dict.keys())
+        # for img_name in self.nir_camera_dict:
+        #     W2C = np.array(self.nir_camera_dict[img_name]['W2C']).reshape((4, 4))
+        #     W2C = self.transform_pose(W2C, translate, scale)
+        #     assert (np.isclose(np.linalg.det(W2C[:3, :3]), 1.))
+        #     self.nir_camera_dict[img_name]['W2C'] = list(W2C.flatten())
+        #
+        # for x in list(self.rgb_camera_dict.keys()):
+        #     x = x[:-4] + ".png"
+        #     self.rgb_camera_dict[x]["K"] = np.array(self.rgb_camera_dict[x]["K"]).reshape((4, 4))
+        #     self.rgb_camera_dict[x]["W2C"] = np.array(self.rgb_camera_dict[x]["W2C"]).reshape((4, 4))
+        #
+        # for x in list(self.nir_camera_dict.keys()):
+        #     x = x[:-4] + ".png"
+        #     self.nir_camera_dict[x]["K"] = np.array(self.nir_camera_dict[x]["K"]).reshape((4, 4))
+        #     self.nir_camera_dict[x]["W2C"] = np.array(self.nir_camera_dict[x]["W2C"]).reshape((4, 4))
+
+        #self.camera_dict = camera_dict
+
+        #folder_name = self.conf['folder_name'] if 'folder_name' in self.conf else 'image'
+
+        # load RGB images
+        try:
+            self.RGB_list = sorted(glob(os.path.join(self.data_rgb_dir, '*.png')))
+            self.RGB_list = [f for f in self.RGB_list if os.path.basename(f) in self.camera_dict]
+            self.n_RGB = len(self.RGB_list)
+            self.RGB_np = np.stack([self.image_reader(im_name) for im_name in self.RGB_list]) / 255.0
+        except:
+            print("Loading png images failed; try loading exr images")
+            self.RGB_list = sorted(glob(os.path.join(self.data_rgb_dir, '*.exr')))
+            self.n_RGB = len(self.RGB_list)
+            self.RGB_np = np.stack([self.exr_reader(im_name) for im_name in self.RGB_list])
+
+        # load NIR images
+        try:
+            self.NIR_list = sorted(glob(os.path.join(self.data_nir_dir, '*.png')))
+            self.NIR_list = [f for f in self.NIR_list if os.path.basename(f) in self.camera_dict]
+            self.n_NIR = len(self.NIR_list)
+            self.NIR_np = np.stack([self.image_reader(im_name) for im_name in self.NIR_list]) / 255.0
+        except:
+            print("Loading png images failed; try loading exr images")
+            self.NIR_list = sorted(glob(os.path.join(self.data_nir_dir, '*.exr')))
+            self.n_NIR = len(self.NIR_list)
+            self.NIR_np = np.stack([self.exr_reader(im_name) for im_name in self.NIR_list])
 
         no_mask = True
         if no_mask:
             print("Not using masks")
             self.masks_lis = None
-            self.masks_np = np.ones_like(self.images_np)
+            self.masks_np = np.ones_like(self.RGB_np)
         else:
             try:
                 self.masks_lis = sorted(glob(os.path.join(self.data_dir, "mask/*.png")))
@@ -452,36 +495,85 @@ class DatasetNIRRGB:
 
                 print("Loading mask images failed; try not using masks")
                 self.masks_lis = None
-                self.masks_np = np.ones_like(self.images_np)
+                self.masks_np = np.ones_like(self.RGB_np)
 
-        self.images_np = self.images_np[..., :3]
+        # load NIR images
+        # try:
+        #     self.nir_images_lis = sorted(glob(os.path.join(self.data_nir_dir, f"{folder_name}/*.png")))
+        #     self.nir_n_images = len(self.nir_images_lis)
+        #     self.nir_images_np = np.stack([self.image_reader(im_name) for im_name in self.nir_images_lis]) / 255.0
+        # except:
+        #     print("Loading png images failed; try loading exr images")
+        #     self.nir_images_lis = sorted(glob(os.path.join(self.data_nir_dir, f"{folder_name}/*.exr")))
+        #     self.nir_n_images = len(self.nir_images_lis)
+        #     self.nir_images_np = np.stack([self.exr_reader(im_name) for im_name in self.nir_images_lis])
+
+        #self.images_np = self.images_np[..., :3]
+        self.RGB_np = self.RGB_np[..., :3]
+        self.NIR_np = self.NIR_np[..., :3]
         self.masks_np = self.masks_np[..., :3]
 
         # scale_mat: used for coordinate normalization, we assume the scene to render is inside a unit sphere at origin.
-        self.scale_mats_np = [np.eye(4).astype(np.float32) for idx in range(self.n_images)]
+        self.scale_mats_np = [np.eye(4).astype(np.float32) for idx in range(self.n_RGB+self.n_NIR)]
 
-        self.intrinsics_all = []
-        self.pose_all = []
-        self.world_mats_np = []
-        for x in self.images_lis:
+        self.intrinsics_RGB = []
+        self.pose_RGB = []
+        self.world_mats_RGB_np = []
+        for x in self.RGB_list:
+            x = os.path.basename(x)[:-4] + ".png"
+            #x = x if x.endswith('png') else x[:4] + '.png'
+            K = self.camera_dict[x]["K"].astype(np.float32)
+            W2C = self.camera_dict[x]["W2C"].astype(np.float32)
+            C2W = np.linalg.inv(self.camera_dict[x]["W2C"]).astype(np.float32)
+            self.intrinsics_RGB.append(torch.from_numpy(K))
+            self.pose_RGB.append(torch.from_numpy(C2W))
+            self.world_mats_RGB_np.append(W2C)
+
+        self.intrinsics_NIR = []
+        self.pose_NIR = []
+        self.world_mats_NIR_np = []
+        for x in self.NIR_list:
             x = os.path.basename(x)[:-4] + ".png"
             K = self.camera_dict[x]["K"].astype(np.float32)
             W2C = self.camera_dict[x]["W2C"].astype(np.float32)
             C2W = np.linalg.inv(self.camera_dict[x]["W2C"]).astype(np.float32)
-            self.intrinsics_all.append(torch.from_numpy(K))
-            self.pose_all.append(torch.from_numpy(C2W))
-            self.world_mats_np.append(W2C)
+            self.intrinsics_NIR.append(torch.from_numpy(K))
+            self.pose_NIR.append(torch.from_numpy(C2W))
+            self.world_mats_NIR_np.append(W2C)
 
-        self.images = torch.from_numpy(self.images_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
+        # self.intrinsics_all = []
+        # self.pose_all = []
+        # self.world_mats_np = []
+        # for x in self.images_lis:
+        #     x = os.path.basename(x)[:-4] + ".png"
+        #     K = self.camera_dict[x]["K"].astype(np.float32)
+        #     W2C = self.camera_dict[x]["W2C"].astype(np.float32)
+        #     C2W = np.linalg.inv(self.camera_dict[x]["W2C"]).astype(np.float32)
+        #     self.intrinsics_all.append(torch.from_numpy(K))
+        #     self.pose_all.append(torch.from_numpy(C2W))
+        #     self.world_mats_np.append(W2C)
+
+        #self.images = torch.from_numpy(self.images_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
+        self.RGB_images = torch.from_numpy(self.RGB_np.astype(np.float32)).cpu()  # [n_RGB, H, W, 3]
+        self.NIR_images = torch.from_numpy(self.NIR_np.astype(np.float32)).cpu()  # [n_NIR, H, W, 3]
         self.masks = torch.from_numpy(self.masks_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
-        print("image shape, mask shape: ", self.images.shape, self.masks.shape)
-        print("image pixel range: ", self.images.min().item(), self.images.max().item())
+        print("image shape, mask shape: ", self.RGB_images.shape, self.NIR_images.shape, self.masks.shape)
+        print("image pixel range: ", self.RGB_images.min().item(), self.RGB_images.max().item(),
+              self.NIR_images.min().item(), self.NIR_images.max().item())
 
-        self.intrinsics_all = torch.stack(self.intrinsics_all).to(self.device)  # [n_images, 4, 4]
-        self.intrinsics_all_inv = torch.inverse(self.intrinsics_all)  # [n_images, 4, 4]
-        self.focal = self.intrinsics_all[0][0, 0]
-        self.pose_all = torch.stack(self.pose_all).to(self.device)  # [n_images, 4, 4]
-        self.H, self.W = self.images.shape[1], self.images.shape[2]
+        #self.intrinsics_all = torch.stack(self.intrinsics_all).to(self.device)  # [n_images, 4, 4]
+        self.intrinsics_RGB = torch.stack(self.intrinsics_RGB).to(self.device)  # [n_RGB, 4, 4]
+        self.intrinsics_NIR = torch.stack(self.intrinsics_NIR).to(self.device)  # [n_NIR, 4, 4]
+
+        #self.intrinsics_all_inv = torch.inverse(self.intrinsics_all)  # [n_images, 4, 4]
+        self.intrinsics_RGB_inv = torch.inverse(self.intrinsics_RGB)  # [n_RGB, 4, 4]
+        self.intrinsics_NIR_inv = torch.inverse(self.intrinsics_NIR)  # [n_NIR, 4, 4]
+
+        self.focal = self.intrinsics_RGB[0][0, 0]
+        #self.pose_all = torch.stack(self.pose_all).to(self.device)  # [n_images, 4, 4]
+        self.pose_RGB = torch.stack(self.pose_RGB).to(self.device)  # [n_RGB, 4, 4]
+        self.pose_NIR = torch.stack(self.pose_NIR).to(self.device)  # [n_NIR, 4, 4]
+        self.H, self.W = self.RGB_images.shape[1], self.RGB_images.shape[2]
         self.image_pixels = self.H * self.W
 
         object_bbox_min = np.array([-1.01, -1.01, -1.01, 1.0])
@@ -494,6 +586,13 @@ class DatasetNIRRGB:
         self.object_bbox_max = object_bbox_max[:3, 0]
 
         print("Load data: End")
+
+    def transform_pose(self, W2C, translate, scale):
+        C2W = np.linalg.inv(W2C)
+        cam_center = C2W[:3, 3]
+        cam_center = (cam_center + translate) * scale
+        C2W[:3, 3] = cam_center
+        return np.linalg.inv(C2W)
 
     def load_IRON_dict(self, filename='cam_dict_norm.json'):
         camera_dict = json.load(open(os.path.join(self.data_dir, filename)))
@@ -588,38 +687,36 @@ class DatasetNIRRGB:
         a = torch.sum(rays_d ** 2, dim=-1, keepdim=True)
         b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
         mid = 0.5 * (-b) / a
-
-        if True:
-            near = mid - 1.0
-            far = mid + 1.0
-            # print(near, far)
-
-        if False:
-            near = mid - 1.0
-            far = mid + 1.0
-        if False:
-            near = mid - 1.5
-            far = mid + 0.5
-        if False:
-            near = self.near
-            far = self.far
-        if False:
-            near = 0.3 * torch.ones_like(mid)
-            far = 1.5 * torch.ones_like(mid)
-        if False:
-            print(mid - 1.0, mid + 1.0)
-            near = torch.maximum(mid - 1.0, 0.05 * torch.ones_like(mid))
-            far = torch.minimum(mid + 1.0, 2.0 * torch.ones_like(mid))
+        near = mid - 1.0
+        far = mid + 1.0
         return near, far
 
     def image_at(self, idx, resolution_level):
         if self.images_lis[idx].endswith(".exr"):
             img = np.clip(self.exr_reader(self.images_lis[idx])*256, 0, 255)
-            # if False:
-            #     import pyexr
-            #     img = np.power(pyexr.open(self.images_lis[idx]).get()[:, :, ::-1], 1.0 / 2.2) * 255.0
-            # else:
-            #     img = imageio.v3.imread(self.images_lis[idx])
         if self.images_lis[idx].endswith(".png"):
             img = self.image_reader(self.images_lis[idx])
         return (cv2.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255).astype(np.uint8)
+
+
+if __name__ == '__main__':
+    from pyhocon import ConfigFactory
+    conf_path = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/IRON/confs/nirrgb.conf'
+    case = 'apple_all'
+    rgb_case = 'apple_all'
+    nir_case = 'apple_all'
+    with open(conf_path) as f:
+        conf_text = f.read()
+        conf_text = conf_text.replace("CASE_NAME", case)
+        f.close()
+    conf = ConfigFactory.parse_string(conf_text)
+    conf["dataset.data_dir"] = conf["dataset.data_dir"].replace("CASE_NAME", case)
+    conf['dataset']['rgb_dir'] = conf['dataset']['rgb_dir'].replace("RGB_NAME", rgb_case)
+    conf['dataset']['nir_dir'] = conf['dataset']['nir_dir'].replace("NIR_NAME", nir_case)
+    conf["dataset.rgb_dir"] = conf['dataset']['rgb_dir']
+    conf["dataset.nir_dir"] = conf['dataset']['nir_dir']
+    base_exp_dir = conf["general.base_exp_dir"]
+    os.makedirs(base_exp_dir, exist_ok=True)
+    dataset = DatasetNIRRGB(conf["dataset"], dataset_type='nir')
+    print(dataset)
+    print(dataset.NIR_images.shape, dataset.RGB_images.shape)

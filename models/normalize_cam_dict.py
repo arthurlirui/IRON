@@ -1,3 +1,5 @@
+import os.path
+
 import numpy as np
 import json
 import copy
@@ -53,11 +55,14 @@ def get_tf_cams(cam_dict, target_radius=1.):
     return translate, scale
 
 
-def normalize_cam_dict(in_cam_dict_file, out_cam_dict_file, target_radius=1., in_geometry_file=None, out_geometry_file=None):
-    with open(in_cam_dict_file) as fp:
-        in_cam_dict = json.load(fp)
+def normalize_cam_dict(in_cam_dict_file_list, out_cam_dict_file, target_radius=1., in_geometry_file=None, out_geometry_file=None):
+    in_cam_dict_list = []
+    for in_cam_dict_file in in_cam_dict_file_list:
+        with open(in_cam_dict_file) as fp:
+            in_cam_dict = json.load(fp)
+            in_cam_dict_list.append(in_cam_dict)
 
-    translate, scale = get_tf_cams(in_cam_dict, target_radius=target_radius)
+    translate, scale = get_tf_cams_list(in_cam_dict_list, target_radius=target_radius)
 
     if in_geometry_file is not None and out_geometry_file is not None:
         # check this page if you encounter issue in file io: http://www.open3d.org/docs/0.9.0/tutorial/Basic/file_io.html
@@ -91,6 +96,11 @@ def normalize_cam_dict(in_cam_dict_file, out_cam_dict_file, target_radius=1., in
 
 
 if __name__ == '__main__':
-    in_cam_dict_file = ''
-    out_cam_dict_file = ''
-    normalize_cam_dict(in_cam_dict_file, out_cam_dict_file, target_radius=1.)
+    in_cam_dict_file_list = []
+    datapath = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/IRON/data_nir'
+    in_cam_dict_file_list.append(os.path.join(datapath, 'apple_env', 'train', 'cam_dict.json'))
+    in_cam_dict_file_list.append(os.path.join(datapath, 'apple_nir', 'train', 'cam_dict.json'))
+    #in_cam_dict_file = ''
+    out_cam_dict_file = os.path.join(datapath, 'apple_env', 'train', 'cam_dict_rgbnir_norm.json')
+    normalize_cam_dict(in_cam_dict_file_list=in_cam_dict_file_list,
+                       out_cam_dict_file=out_cam_dict_file, target_radius=1.)

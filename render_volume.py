@@ -12,13 +12,14 @@ from shutil import copyfile
 from icecream import ic
 from tqdm import tqdm
 from pyhocon import ConfigFactory
-from models.dataset import Dataset
+from models.dataset import Dataset, DatasetNIRRGB
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF
 from models.renderer import NeuSRenderer
 
 
 class Runner:
-    def __init__(self, conf_path, mode="train", case="CASE_NAME", is_continue=False):
+    def __init__(self, conf_path, mode="train",
+                 case="CASE_NAME", nir_case="NIR_NAME", rgb_case="RGB_NAME", is_continue=False):
         self.device = torch.device("cuda")
 
         # Configuration
@@ -32,9 +33,15 @@ class Runner:
         print(conf_text)
         self.conf = ConfigFactory.parse_string(conf_text)
         self.conf["dataset.data_dir"] = self.conf["dataset.data_dir"].replace("CASE_NAME", case)
+        self.conf['dataset']['rgb_dir'] = self.conf['dataset']['rgb_dir'].replace("RGB_NAME", rgb_case)
+        self.conf['dataset']['nir_dir'] = self.conf['dataset']['nir_dir'].replace("NIR_NAME", nir_case)
+        self.conf["dataset.rgb_dir"] = self.conf['dataset']['rgb_dir']
+        self.conf["dataset.nir_dir"] = self.conf['dataset']['nir_dir']
         self.base_exp_dir = self.conf["general.base_exp_dir"]
         os.makedirs(self.base_exp_dir, exist_ok=True)
-        self.dataset = Dataset(self.conf["dataset"])
+        self.dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
+        self.dataset_nir = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
+        self.dataset_rgb = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
         self.iter_step = 0
 
         # Training parameters
@@ -339,7 +346,7 @@ class Runner:
                         img_fine[..., i],
                         self.dataset.image_at(idx, resolution_level=resolution_level)[:, :, :3]
                     ], axis=0).astype('uint8')
-                print(img.shape)
+                #print(img.shape)
                 self.dataset.image_writer(img_path, img)
                 # cv.imwrite(
                 #     os.path.join(
@@ -358,7 +365,7 @@ class Runner:
             if len(out_normal_fine) > 0:
                 normal_path = os.path.join(self.base_exp_dir,
                                            "normals", "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
-                self.dataset.normal_writer(normal_path, normal_img[..., i])
+                self.dataset.image_writer(normal_path, normal_img[..., i].astype('uint8'))
                 # cv.imwrite(
                 #     os.path.join(
                 #         self.base_exp_dir,
@@ -466,12 +473,14 @@ if __name__ == "__main__":
     parser.add_argument("--is_continue", default=False, action="store_true")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--case", type=str, default="")
+    parser.add_argument("--nir_case", type=str, default="apple_nir")
+    parser.add_argument("--rgb_case", type=str, default="apple_rgb")
 
     args = parser.parse_args()
     print(args)
 
     torch.cuda.set_device(args.gpu)
-    runner = Runner(args.conf, args.mode, args.case, args.is_continue)
+    runner = Runner(args.conf, args.mode, args.case, args.nir_case, args.rgb_case, args.is_continue)
 
     if args.mode == "train":
         runner.train()
