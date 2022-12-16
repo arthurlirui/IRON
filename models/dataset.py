@@ -375,6 +375,7 @@ class DatasetNIRRGB:
         self.data_rgb_dir = conf.get_string('rgb_dir')
         self.data_nir_dir = conf.get_string('nir_dir')
         self.data_dir = conf.get_string("data_dir")
+        self.file_type = conf.get_string("file_type")
 
         self.render_cameras_name = conf.get_string("render_cameras_name")
         self.object_cameras_name = conf.get_string("object_cameras_name")
@@ -422,7 +423,7 @@ class DatasetNIRRGB:
                 pass
 
         for x in list(self.camera_dict.keys()):
-            x = x if x.endswith('png') else x[:4] + '.png'
+            #x = x if x.endswith('png') else x[:4] + '.png'
             #x = x[:-4] + ".png"
             self.camera_dict[x]["K"] = np.array(self.camera_dict[x]["K"]).reshape((4, 4))
             self.camera_dict[x]["W2C"] = np.array(self.camera_dict[x]["W2C"]).reshape((4, 4))
@@ -459,7 +460,7 @@ class DatasetNIRRGB:
 
         # load RGB images
         try:
-            self.RGB_list = sorted(glob(os.path.join(self.data_rgb_dir, '*.png')))
+            self.RGB_list = sorted(glob(os.path.join(self.data_rgb_dir, f'*.{self.file_type}')))
             self.RGB_list = [f for f in self.RGB_list if os.path.basename(f) in self.camera_dict]
             self.n_RGB = len(self.RGB_list)
             self.RGB_np = np.stack([self.image_reader(im_name) for im_name in self.RGB_list]) / 255.0
@@ -485,14 +486,15 @@ class DatasetNIRRGB:
         if no_mask:
             print("Not using masks")
             self.masks_lis = None
-            self.masks_np = np.ones_like(self.RGB_np)
+            #self.masks_np = np.ones_like(self.RGB_np)
+            self.masks_RGB_np = np.ones_like(self.RGB_np)
+            self.masks_NIR_np = np.ones_like(self.NIR_np)
         else:
             try:
-                self.masks_lis = sorted(glob(os.path.join(self.data_dir, "mask/*.png")))
+                self.masks_lis = sorted(glob(os.path.join(self.data_dir, 'mask', f'*.{self.file_type}')))
                 self.masks_np = np.stack([cv2.imread(im_name) for im_name in self.masks_lis]) / 255.0
             except:
                 # traceback.print_exc()
-
                 print("Loading mask images failed; try not using masks")
                 self.masks_lis = None
                 self.masks_np = np.ones_like(self.RGB_np)
@@ -511,7 +513,9 @@ class DatasetNIRRGB:
         #self.images_np = self.images_np[..., :3]
         self.RGB_np = self.RGB_np[..., :3]
         self.NIR_np = self.NIR_np[..., :3]
-        self.masks_np = self.masks_np[..., :3]
+        #self.masks_np = self.masks_np[..., :3]
+        self.masks_RGB_np = self.masks_RGB_np[..., :3]
+        self.masks_NIR_np = self.masks_NIR_np[..., :3]
 
         # scale_mat: used for coordinate normalization, we assume the scene to render is inside a unit sphere at origin.
         self.scale_mats_np = [np.eye(4).astype(np.float32) for idx in range(self.n_RGB+self.n_NIR)]
@@ -520,7 +524,7 @@ class DatasetNIRRGB:
         self.pose_RGB = []
         self.world_mats_RGB_np = []
         for x in self.RGB_list:
-            x = os.path.basename(x)[:-4] + ".png"
+            #x = os.path.basename(x)[:-4] + ".png"
             #x = x if x.endswith('png') else x[:4] + '.png'
             K = self.camera_dict[x]["K"].astype(np.float32)
             W2C = self.camera_dict[x]["W2C"].astype(np.float32)
@@ -533,7 +537,7 @@ class DatasetNIRRGB:
         self.pose_NIR = []
         self.world_mats_NIR_np = []
         for x in self.NIR_list:
-            x = os.path.basename(x)[:-4] + ".png"
+            #x = os.path.basename(x)[:-4] + ".png"
             K = self.camera_dict[x]["K"].astype(np.float32)
             W2C = self.camera_dict[x]["W2C"].astype(np.float32)
             C2W = np.linalg.inv(self.camera_dict[x]["W2C"]).astype(np.float32)
@@ -556,8 +560,11 @@ class DatasetNIRRGB:
         #self.images = torch.from_numpy(self.images_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
         self.RGB_images = torch.from_numpy(self.RGB_np.astype(np.float32)).cpu()  # [n_RGB, H, W, 3]
         self.NIR_images = torch.from_numpy(self.NIR_np.astype(np.float32)).cpu()  # [n_NIR, H, W, 3]
-        self.masks = torch.from_numpy(self.masks_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
-        print("image shape, mask shape: ", self.RGB_images.shape, self.NIR_images.shape, self.masks.shape)
+        #self.masks = torch.from_numpy(self.masks_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
+        self.RGB_masks = torch.from_numpy(self.masks_RGB_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
+        self.NIR_masks = torch.from_numpy(self.masks_NIR_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
+        print("image shape, mask shape: ", self.RGB_images.shape, self.NIR_images.shape,
+              self.RGB_masks.shape, self.NIR_masks.shape)
         print("image pixel range: ", self.RGB_images.min().item(), self.RGB_images.max().item(),
               self.NIR_images.min().item(), self.NIR_images.max().item())
 
@@ -619,51 +626,127 @@ class DatasetNIRRGB:
             camera_dict[x]['C2W'] = C2W
         return camera_dict
 
-    def gen_rays_at(self, img_idx, resolution_level=1):
+    def gen_rays_at_nir(self, img_idx, resolution_level=1):
+        l = resolution_level
+        tx = torch.linspace(0, self.W - 1, self.W // l)
+        ty = torch.linspace(0, self.H - 1, self.H // l)
+        pixels_x, pixels_y = torch.meshgrid(tx, ty)
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
+        p = torch.matmul(self.intrinsics_NIR_inv[img_idx, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+        rays_v = torch.matmul(self.pose_NIR[img_idx, None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
+        rays_o = self.pose_NIR[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
+        return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
+
+    def gen_rays_at_rgb(self, img_idx, resolution_level=1):
+        l = resolution_level
+        tx = torch.linspace(0, self.W - 1, self.W // l)
+        ty = torch.linspace(0, self.H - 1, self.H // l)
+        pixels_x, pixels_y = torch.meshgrid(tx, ty)
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
+        p = torch.matmul(self.intrinsics_NIR_inv[img_idx, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+        rays_v = torch.matmul(self.pose_RGB[img_idx, None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
+        rays_o = self.pose_RGB[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
+        return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
+
+    def gen_rays_at(self, img_idx, resolution_level=1, data_type='rgb'):
         """
         Generate rays at world space from one camera.
         """
-        l = resolution_level
-        tx = torch.linspace(0, self.W - 1, self.W // l)
-        ty = torch.linspace(0, self.H - 1, self.H // l)
-        pixels_x, pixels_y = torch.meshgrid(tx, ty)
-        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
-        p = torch.matmul(self.intrinsics_all_inv[img_idx, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
-        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
-        rays_v = torch.matmul(self.pose_all[img_idx, None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
-        rays_o = self.pose_all[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
-        return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
+        # l = resolution_level
+        # tx = torch.linspace(0, self.W - 1, self.W // l)
+        # ty = torch.linspace(0, self.H - 1, self.H // l)
+        # pixels_x, pixels_y = torch.meshgrid(tx, ty)
+        # p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
+        # p = torch.matmul(self.intrinsics_all_inv[img_idx, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        # rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+        # rays_v = torch.matmul(self.pose_all[img_idx, None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
+        # rays_o = self.pose_all[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
+        # return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
+        if data_type == 'rgb':
+            return self.gen_rays_at_rgb(img_idx, resolution_level=1)
+        elif data_type == 'nir':
+            return self.gen_rays_at_nir(img_idx, resolution_level=1)
+        else:
+            return None
 
-    def gen_random_rays_at(self, img_idx, batch_size):
+    def gen_random_rays_at_RGB(self, img_idx, batch_size):
         """
-        Generate random rays at world space from one camera.
+            Generate random rays at world space from one camera for RGB dataset
         """
         pixels_x = torch.randint(low=0, high=self.W, size=[batch_size])
         pixels_y = torch.randint(low=0, high=self.H, size=[batch_size])
-        color = self.images[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
-        mask = self.masks[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        color = self.RGB_images[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        mask = self.RGB_masks[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
         p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1).float()  # batch_size, 3
-        p = torch.matmul(self.intrinsics_all_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
+        p = torch.matmul(self.intrinsics_RGB_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # batch_size, 3
-        rays_v = torch.matmul(self.pose_all[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
+        rays_v = torch.matmul(self.pose_RGB[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
         # rays_v = rays_v * -1
-        rays_o = self.pose_all[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
+        rays_o = self.pose_RGB[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
         return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()  # batch_size, 10
 
-    def gen_rays_between(self, idx_0, idx_1, ratio, resolution_level=1):
+    def gen_random_rays_at_NIR(self, img_idx, batch_size):
+        """
+            Generate random rays at world space from one camera for NIR dataset
+        """
+        pixels_x = torch.randint(low=0, high=self.W, size=[batch_size])
+        pixels_y = torch.randint(low=0, high=self.H, size=[batch_size])
+        color = self.NIR_images[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        mask = self.NIR_masks[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1).float()  # batch_size, 3
+        p = torch.matmul(self.intrinsics_NIR_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # batch_size, 3
+        rays_v = torch.matmul(self.pose_RGB[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
+        # rays_v = rays_v * -1
+        rays_o = self.pose_NIR[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
+        return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()  # batch_size, 10
+
+    def gen_random_rays_at(self, img_idx, batch_size, data_type='rgb'):
+        """
+        Generate random rays at world space from one camera.
+        """
+        # pixels_x = torch.randint(low=0, high=self.W, size=[batch_size])
+        # pixels_y = torch.randint(low=0, high=self.H, size=[batch_size])
+        # color = self.images[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        # mask = self.masks[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        # p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1).float()  # batch_size, 3
+        # p = torch.matmul(self.intrinsics_all_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
+        # rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # batch_size, 3
+        # rays_v = torch.matmul(self.pose_all[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
+        # # rays_v = rays_v * -1
+        # rays_o = self.pose_all[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
+        # return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()  # batch_size, 10
+        if data_type == 'rgb':
+            return self.gen_random_rays_at_RGB(img_idx=img_idx, batch_size=batch_size)
+        elif data_type == 'nir':
+            return self.gen_random_rays_at_NIR(img_idx=img_idx, batch_size=batch_size)
+        else:
+            return None
+
+    def gen_rays_between(self, idx_0, idx_1, ratio, resolution_level=1, data_type='rgb'):
         """
         Interpolate pose between two cameras.
         """
+        if data_type == 'rgb':
+            intrinsics_all_inv = self.intrinsics_RGB_inv
+            pose_all = self.pose_RGB
+        elif data_type == 'nir':
+            intrinsics_all_inv = self.intrinsics_NIR_inv
+            pose_all = self.pose_NIR
+        else:
+            pass
         l = resolution_level
         tx = torch.linspace(0, self.W - 1, self.W // l)
         ty = torch.linspace(0, self.H - 1, self.H // l)
         pixels_x, pixels_y = torch.meshgrid(tx, ty)
         p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
-        p = torch.matmul(self.intrinsics_all_inv[0, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        p = torch.matmul(intrinsics_all_inv[0, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
-        trans = self.pose_all[idx_0, :3, 3] * (1.0 - ratio) + self.pose_all[idx_1, :3, 3] * ratio
-        pose_0 = self.pose_all[idx_0].detach().cpu().numpy()
-        pose_1 = self.pose_all[idx_1].detach().cpu().numpy()
+        trans = pose_all[idx_0, :3, 3] * (1.0 - ratio) + pose_all[idx_1, :3, 3] * ratio
+        pose_0 = pose_all[idx_0].detach().cpu().numpy()
+        pose_1 = pose_all[idx_1].detach().cpu().numpy()
         pose_0 = np.linalg.inv(pose_0)
         pose_1 = np.linalg.inv(pose_1)
         rot_0 = pose_0[:3, :3]
@@ -708,7 +791,7 @@ if __name__ == '__main__':
     with open(conf_path) as f:
         conf_text = f.read()
         conf_text = conf_text.replace("CASE_NAME", case)
-        f.close()
+        #f.close()
     conf = ConfigFactory.parse_string(conf_text)
     conf["dataset.data_dir"] = conf["dataset.data_dir"].replace("CASE_NAME", case)
     conf['dataset']['rgb_dir'] = conf['dataset']['rgb_dir'].replace("RGB_NAME", rgb_case)
@@ -718,5 +801,5 @@ if __name__ == '__main__':
     base_exp_dir = conf["general.base_exp_dir"]
     os.makedirs(base_exp_dir, exist_ok=True)
     dataset = DatasetNIRRGB(conf["dataset"], dataset_type='nir')
-    print(dataset)
+    #print(dataset)
     print(dataset.NIR_images.shape, dataset.RGB_images.shape)
