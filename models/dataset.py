@@ -80,7 +80,7 @@ def image_writer(writer_name='imageio'):
         return writer_imageio
     if writer_name == 'opencv':
         def writer_opencv(outpath, img):
-            return cv2.imwrite(outpath, img)
+            return cv2.imwrite(outpath, img[:, :, ::-1])
         return writer_opencv
 
 
@@ -383,8 +383,8 @@ class DatasetNIRRGB:
         self.camera_outside_sphere = conf.get_bool("camera_outside_sphere", default=True)
 
         # initial image reader: use same image reader for any place
-        self.image_reader = image_reader(reader_name='imageio')
-        self.image_writer = image_writer(writer_name='imageio')
+        self.image_reader = image_reader(reader_name='opencv')
+        self.image_writer = image_writer(writer_name='opencv')
         self.exr_reader = exr_reader(reader_name='pyexr')
         self.exr_writer = exr_writer(writer_name='pyexr')
         self.normal_writer = exr_writer(writer_name='pyexr')
@@ -407,6 +407,7 @@ class DatasetNIRRGB:
                     camera_dict = json.load(fp=f)
                     #cam_dict_list.extend(camera_dict)
                     self.camera_dict = camera_dict
+                # check non-exist files and remove empty keys
 
         target_radius = 1.0
         translate, scale = get_tf_cams(self.camera_dict, target_radius=target_radius)
@@ -423,10 +424,11 @@ class DatasetNIRRGB:
                 pass
 
         for x in list(self.camera_dict.keys()):
-            #x = x if x.endswith('png') else x[:4] + '.png'
-            #x = x[:-4] + ".png"
-            self.camera_dict[x]["K"] = np.array(self.camera_dict[x]["K"]).reshape((4, 4))
-            self.camera_dict[x]["W2C"] = np.array(self.camera_dict[x]["W2C"]).reshape((4, 4))
+            if os.path.exists(os.path.join(self.data_rgb_dir, x)) or os.path.exists(os.path.join(self.data_nir_dir, x)):
+                self.camera_dict[x]["K"] = np.array(self.camera_dict[x]["K"]).reshape((4, 4))
+                self.camera_dict[x]["W2C"] = np.array(self.camera_dict[x]["W2C"]).reshape((4, 4))
+            else:
+                self.camera_dict.pop(x, None)
 
         #self.camera_dict = camera_dict_list
 
@@ -525,6 +527,7 @@ class DatasetNIRRGB:
         self.world_mats_RGB_np = []
         for x in self.RGB_list:
             #x = os.path.basename(x)[:-4] + ".png"
+            x = os.path.basename(x)
             #x = x if x.endswith('png') else x[:4] + '.png'
             K = self.camera_dict[x]["K"].astype(np.float32)
             W2C = self.camera_dict[x]["W2C"].astype(np.float32)
@@ -537,7 +540,7 @@ class DatasetNIRRGB:
         self.pose_NIR = []
         self.world_mats_NIR_np = []
         for x in self.NIR_list:
-            #x = os.path.basename(x)[:-4] + ".png"
+            x = os.path.basename(x)
             K = self.camera_dict[x]["K"].astype(np.float32)
             W2C = self.camera_dict[x]["W2C"].astype(np.float32)
             C2W = np.linalg.inv(self.camera_dict[x]["W2C"]).astype(np.float32)
@@ -665,9 +668,9 @@ class DatasetNIRRGB:
         # rays_o = self.pose_all[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
         # return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
         if data_type == 'rgb':
-            return self.gen_rays_at_rgb(img_idx, resolution_level=1)
+            return self.gen_rays_at_rgb(img_idx, resolution_level=resolution_level)
         elif data_type == 'nir':
-            return self.gen_rays_at_nir(img_idx, resolution_level=1)
+            return self.gen_rays_at_nir(img_idx, resolution_level=resolution_level)
         else:
             return None
 
@@ -774,11 +777,19 @@ class DatasetNIRRGB:
         far = mid + 1.0
         return near, far
 
-    def image_at(self, idx, resolution_level):
-        if self.images_lis[idx].endswith(".exr"):
-            img = np.clip(self.exr_reader(self.images_lis[idx])*256, 0, 255)
-        if self.images_lis[idx].endswith(".png"):
-            img = self.image_reader(self.images_lis[idx])
+    def image_at(self, idx, resolution_level, data_type='rgb'):
+        if data_type == 'rgb':
+            if self.RGB_list[idx].endswith(".exr"):
+                img = np.clip(self.exr_reader(self.RGB_list[idx])*256, 0, 255)
+            if self.RGB_list[idx].endswith(".png"):
+                img = self.image_reader(self.RGB_list[idx])
+        elif data_type == 'nir':
+            if self.NIR_list[idx].endswith(".exr"):
+                img = np.clip(self.exr_reader(self.NIR_list[idx])*256, 0, 255)
+            if self.NIR_list[idx].endswith(".png"):
+                img = self.image_reader(self.NIR_list[idx])
+        else:
+            pass
         return (cv2.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255).astype(np.uint8)
 
 

@@ -149,7 +149,7 @@ class NeuSRenderer:
         self.up_sample_steps = up_sample_steps
         self.perturb = perturb
 
-    def render_core_outside(self, rays_o, rays_d, z_vals, sample_dist, nerf, background_rgb=None):
+    def render_core_outside(self, rays_o, rays_d, z_vals, sample_dist, nerf, background_rgb=None, background_nir=None):
         """
         Render background
         """
@@ -172,7 +172,7 @@ class NeuSRenderer:
         dirs = dirs.reshape(-1, 3)
 
         if True:
-            density, sampled_color = nerf(pts, dirs)
+            density, sampled_color, sample_nir = nerf(pts, dirs)
         else:
             #inputs = torch.cat([pts[:, :3], dirs], dim=-1)
             inputs = pts[:, :3]
@@ -180,19 +180,24 @@ class NeuSRenderer:
             #outputs = nerf.model(inputs)
             #print(outputs.shape)
             #density, sampled_color = outputs[:, 0:1], outputs[:, 1:]
-            sampled_color, density = nerf(pts[:, :3], dirs[:, :3])
+            #sampled_color, density = nerf(pts[:, :3], dirs[:, :3])
 
         alpha = 1.0 - torch.exp(-F.softplus(density.reshape(batch_size, n_samples)) * dists)
         alpha = alpha.reshape(batch_size, n_samples)
         weights = alpha * torch.cumprod(torch.cat([torch.ones([batch_size, 1]), 1.0 - alpha + 1e-7], -1), -1)[:, :-1]
         sampled_color = sampled_color.reshape(batch_size, n_samples, 3)
+        sampled_nir = sample_nir.reshape(batch_size, n_samples, 1)
         color = (weights[:, :, None] * sampled_color).sum(dim=1)
+        nir = (weights[:, :, None] * sampled_nir).sum(dim=1)
         if background_rgb is not None:
             color = color + background_rgb * (1.0 - weights.sum(dim=-1, keepdim=True))
+            nir = nir + background_rgb * (1.0 - weights.sum(dim=-1, keepdim=True))
 
         return {
             "color": color,
+            "nir": nir,
             "sampled_color": sampled_color,
+            "sampled_nir": sampled_nir,
             "alpha": alpha,
             "weights": weights,
         }
@@ -291,7 +296,7 @@ class NeuSRenderer:
         feature_vector = sdf_nn_output[:, 1:]
 
         gradients = sdf_network.gradient(pts)
-        sampled_color = color_network(pts, gradients, dirs, feature_vector).reshape(batch_size, n_samples, 3)
+        sampled_color = color_network(pts, gradients, dirs, feature_vector).reshape(batch_size, n_samples, -1)
 
         inv_s = deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)  # Single parameter
         inv_s = inv_s.expand(batch_size * n_samples, 1)
@@ -316,8 +321,10 @@ class NeuSRenderer:
 
         alpha = ((p + 1e-5) / (c + 1e-5)).reshape(batch_size, n_samples).clip(0.0, 1.0)
 
-        pts_norm = torch.linalg.norm(pts, ord=2, dim=-1, keepdim=True).reshape(batch_size, n_samples)
+        pts_norm = torch.linalg.norm(pts, ord=2, dim=-1, keepdim=False).reshape(batch_size, n_samples)
         inside_sphere = (pts_norm < 1.0).float().detach()
+        #print(inside_sphere.shape)
+
         relax_inside_sphere = (pts_norm < 1.2).float().detach()
 
         # Render with background
@@ -325,7 +332,8 @@ class NeuSRenderer:
             alpha = alpha * inside_sphere + background_alpha[:, :n_samples] * (1.0 - inside_sphere)
             alpha = torch.cat([alpha, background_alpha[:, n_samples:]], dim=-1)
             sampled_color = (
-                sampled_color * inside_sphere[:, :, None]
+                #sampled_color * inside_sphere[:, :, None]
+                sampled_color * inside_sphere[:, :, None].expand(sampled_color.shape)
                 + background_sampled_color[:, :n_samples] * (1.0 - inside_sphere)[:, :, None]
             )
             sampled_color = torch.cat([sampled_color, background_sampled_color[:, n_samples:]], dim=1)
@@ -428,6 +436,9 @@ class NeuSRenderer:
             ret_outside = self.render_core_outside(rays_o, rays_d, z_vals_feed, sample_dist, self.nerf)
 
             background_sampled_color = ret_outside["sampled_color"]
+            background_sampled_rgb = ret_outside["sampled_color"]
+            background_sampled_nir = ret_outside["sampled_nir"]
+            background_sampled_nirrgb = torch.cat([background_sampled_rgb, background_sampled_nir], dim=-1)
             background_alpha = ret_outside["alpha"]
 
         # Render core
@@ -441,7 +452,7 @@ class NeuSRenderer:
             self.color_network,
             background_rgb=background_rgb,
             background_alpha=background_alpha,
-            background_sampled_color=background_sampled_color,
+            background_sampled_color=background_sampled_nirrgb,
             cos_anneal_ratio=cos_anneal_ratio,
         )
 
