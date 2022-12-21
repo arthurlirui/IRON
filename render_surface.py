@@ -295,7 +295,10 @@ def load_datadir(datadir, folder_name='image'):
     return image_fpaths, gt_images, Ks, W2Cs
 
 
-image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
+#image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
+RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
+image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, folder_name='rgb')
+#image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 cameras = [
     Camera(W=gt_images[i].shape[1], H=gt_images[i].shape[0], K=Ks[i].cuda(), W2C=W2Cs[i].cuda())
     for i in range(gt_images.shape[0])
@@ -497,7 +500,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     out_gradient = kornia.filters.spatial_gradient(f.permute(2, 0, 1).unsqueeze(0), mode='sobel', order=1, normalized=True)
     #print(out_gradient.shape, f.shape)
     sparse_loss = out_gradient.norm(1)/torch.numel(out_gradient)
-    print(sparse_loss)
+    #print(sparse_loss)
     if mask.any():
         pred_img = results["color"].permute(2, 0, 1).unsqueeze(0)
         gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device)

@@ -48,6 +48,10 @@ class Runner:
         # Training parameters
         self.end_iter = self.conf.get_int("train.end_iter")
         self.save_freq = self.conf.get_int("train.save_freq")
+
+        self.RGB_end_iter = self.end_iter
+        self.NIR_end_iter = 2*self.end_iter
+
         self.report_freq = self.conf.get_int("train.report_freq")
         self.val_freq = self.conf.get_int("train.val_freq")
         self.val_mesh_freq = self.conf.get_int("train.val_mesh_freq")
@@ -111,9 +115,12 @@ class Runner:
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
         self.update_learning_rate()
         res_step = self.end_iter - self.iter_step
+        res_step = 0
         if data_type == 'rgb':
+            res_step = self.RGB_end_iter - self.iter_step
             image_perm = torch.randperm(self.dataset.n_RGB)
         elif data_type == 'nir':
+            res_step = self.NIR_end_iter - self.iter_step
             image_perm = torch.randperm(self.dataset.n_NIR)
         else:
             image_perm = torch.randperm(self.dataset.n_RGB)
@@ -217,7 +224,7 @@ class Runner:
                 self.save_checkpoint()
 
             if self.iter_step % self.val_freq == 0:
-                self.validate_image()
+                self.validate_image(data_type=data_type)
 
             if self.iter_step % self.val_mesh_freq == 0:
                 self.validate_mesh()
@@ -632,6 +639,7 @@ if __name__ == "__main__":
     if args.mode == "train":
         #runner.train()
         runner.train_NIRRGB(data_type='rgb')
+        runner.train_NIRRGB(data_type='nir')
     elif args.mode == "validate_mesh":
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
     elif args.mode.startswith("interpolate"):  # Interpolate views given two image indices
