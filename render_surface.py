@@ -21,6 +21,8 @@ from models.export_mesh import export_mesh, export_mesh_no_translation
 from models.export_materials import export_materials
 
 import kornia
+from models.dataset import image_reader, image_writer, exr_writer, exr_reader
+
 #from torchmetrics.functional import image_gradients
 ###### arguments
 def config_parser():
@@ -243,6 +245,83 @@ def to8b(x):
     return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)
 
 
+def load_dataset_NIRRGB(datadir, folder_name='rgb'):
+    imglist = glob.glob(os.path.join(datadir, folder_name, '*.*'))
+    with open(os.path.join(datadir, 'cam_dict_norm.json')) as f:
+        cam_dict = json.load(f)
+
+    # cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
+    # imgnames = list(cam_dict.keys())
+    # try:
+    #     imgnames = sorted(imgnames, key=lambda x: int(x[:-4]))
+    # except:
+    #     imgnames = sorted(imgnames)
+
+    image_fpaths = []
+    gt_images = []
+    Ks = []
+    W2Cs = []
+    imgtype = 'png'
+    imreader = None
+    imwriter = None
+    if len(imglist) > 0:
+        x = imglist[0]
+        if x.endswith('png') or x.endswith('jpg'):
+            imreader = image_reader('imageio')
+            imwriter = image_writer('imageio')
+        if x.endswith('exr'):
+            imreader = exr_reader('pyexr')
+            imwriter = image_writer('pyexr')
+
+    # load file from folder image
+    for x in imglist:
+        # if x.endswith('png') or x.endswith('jpg'):
+        #    fpath = os.path.join(datadir, 'image', x)
+        # if False:
+        #     if x[-4:] == imgtype:
+        #         fpath = os.path.join(datadir, imgtype, x)
+        #     else:
+        #         fpath = os.path.join(datadir, imgtype, x[:-4] + '.' + imgtype)
+        #     assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
+        #     im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        filename = os.path.basename(x)
+        if filename.endswith('png') or filename.endswith('jpg'):
+            im = imreader(x)/255.0
+        if filename.endswith('exr'):
+            im = imreader(x)
+        fpath = x
+
+
+        # if True:
+        #     filename = x.split('.')[0]
+        #     if os.path.exists(os.path.join(datadir, folder_name, filename + '.png')):
+        #         fpath = os.path.join(datadir, folder_name, filename + '.png')
+        #         im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        #     elif os.path.exists(os.path.join(datadir, folder_name, filename + '.jpg')):
+        #         fpath = os.path.join(datadir, folder_name, filename + '.jpg')
+        #         im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        #     elif os.path.exists(os.path.join(datadir, folder_name, filename + '.exr')):
+        #         fpath = os.path.join(datadir, folder_name, filename + '.exr')
+        #         im = imageio.v3.imread(fpath)
+        #         im = np.clip(np.power(im, 1.0 / 2.2), 0, 1)  # gamma correction
+        #     else:
+        #         assert fpath[-4:] in [".jpg", ".png", ".exr"], "must use ldr images as inputs"
+
+        if not filename in cam_dict:
+            continue
+        K = np.array(cam_dict[filename]["K"]).reshape((4, 4)).astype(np.float32)
+        W2C = np.array(cam_dict[filename]["W2C"]).reshape((4, 4)).astype(np.float32)
+
+        image_fpaths.append(fpath)
+        gt_images.append(torch.from_numpy(im))
+        Ks.append(torch.from_numpy(K))
+        W2Cs.append(torch.from_numpy(W2C))
+    gt_images = torch.stack(gt_images, dim=0)
+    Ks = torch.stack(Ks, dim=0)
+    W2Cs = torch.stack(W2Cs, dim=0)
+    return image_fpaths, gt_images, Ks, W2Cs
+
+
 def load_datadir(datadir, folder_name='image'):
     cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
     imgnames = list(cam_dict.keys())
@@ -296,8 +375,9 @@ def load_datadir(datadir, folder_name='image'):
 
 
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
-RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
-image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, folder_name='rgb')
+#RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
+#image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, folder_name='nir')
+image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB(args.data_dir, folder_name='nir')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 cameras = [
     Camera(W=gt_images[i].shape[1], H=gt_images[i].shape[0], K=Ks[i].cuda(), W2C=W2Cs[i].cuda())
@@ -332,6 +412,7 @@ if len(ckpt_fpaths) > 0:
     ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
     sdf_network.load_state_dict(ckpt["sdf_network"])
     for x in list(color_network_dict.keys()):
+        print(x)
         color_network_dict[x].load_state_dict(ckpt[x])
     # logim_names = [os.path.basename(x) for x in glob.glob(os.path.join(args.out_dir, "logim_*.png"))]
     # start_step = sorted([int(x[len("logim_") : -4]) for x in logim_names])[-1]
@@ -503,7 +584,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     #print(sparse_loss)
     if mask.any():
         pred_img = results["color"].permute(2, 0, 1).unsqueeze(0)
-        gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device)
+        gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device, dtype=pred_img.dtype)
         #print(pred_img.shape, gt_img.shape)
         pred_img = pred_img[:, :3, :, :]
         gt_img = gt_img[:, :3, :, :]

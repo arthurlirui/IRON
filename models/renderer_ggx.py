@@ -105,3 +105,166 @@ class GGXColocatedRenderer(nn.Module):
         diffuse_rgb = light_intensity * (diffuse_albedo / (1.0 - Fdr + 1e-10) / np.pi) * dot * T12 * T21 * m_invEta2
         ret = {"diffuse_rgb": diffuse_rgb, "specular_rgb": specular_rgb, "rgb": diffuse_rgb + specular_rgb}
         return ret
+
+
+class SmoothDielectricRenderer(nn.Module):
+    def __init__(self, use_cuda=False):
+        super().__init__()
+
+        if False:
+            self.MTS_TRANS = torch.from_numpy(
+                np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/ext_mts_rtrans_data.txt")).astype(
+                    np.float32
+                )
+            )  # 5000 entries, external IOR
+            self.MTS_DIFF_TRANS = torch.from_numpy(
+                np.loadtxt(
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/int_mts_diff_rtrans_data.txt")
+                ).astype(np.float32)
+            )  # 50 entries, internal IOR
+            self.num_theta_samples = 100
+            self.num_alpha_samples = 50
+
+            if use_cuda:
+                self.MTS_TRANS = self.MTS_TRANS.cuda()
+                self.MTS_DIFF_TRANS = self.MTS_DIFF_TRANS.cuda()
+
+    def forward(self, light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha):
+        """
+        light:
+        distance: [..., 1]
+        normal, viewdir: [..., 3]; both normal and viewdir point away from objects
+        diffuse_albedo, specular_albedo: [..., 3]
+        alpha: [..., 1]; roughness
+        """
+        # decay light according to squared-distance falloff
+        light_intensity = light / (distance * distance + 1e-10)
+
+        # <wo, n> = <w_i, n> = <h, n> in colocated setting
+        dot = torch.sum(viewdir * normal, dim=-1, keepdims=True)
+        dot = torch.clamp(dot, min=0.00001, max=0.99999)  # must be very precise; cannot be 0.999
+        # default value of IOR['air'] / IOR['bk7'].
+        m_eta = 1.5046
+        #m_invEta2 = 1.0 / (m_eta * m_eta)
+        m_invEta = 1.0 / m_eta
+
+        # clamp alpha for numeric stability
+        #alpha = torch.clamp(alpha, min=0.0001)
+
+        # specular term: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/roughplastic.cpp#L347
+        ## compute GGX NDF: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/microfacet.h#L191
+        #cosTheta2 = dot * dot
+        #root = cosTheta2 + (1.0 - cosTheta2) / (alpha * alpha + 1e-10)
+        #D = 1.0 / (np.pi * alpha * alpha * root * root + 1e-10)
+        ## compute fresnel: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/libcore/util.cpp#L651
+        # for smooth dielectric surface
+        F = 0.04
+        specular_rgb = light_intensity * specular_albedo * F
+        diffuse_rgb = light_intensity * diffuse_albedo * 0.0001
+        ret = {"diffuse_rgb": diffuse_rgb, "specular_rgb": specular_rgb, "rgb": diffuse_rgb + specular_rgb}
+        return ret
+
+
+class ThinDielectricRenderer(nn.Module):
+    def __init__(self, use_cuda=False):
+        super().__init__()
+
+        if False:
+            self.MTS_TRANS = torch.from_numpy(
+                np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/ext_mts_rtrans_data.txt")).astype(
+                    np.float32
+                )
+            )  # 5000 entries, external IOR
+            self.MTS_DIFF_TRANS = torch.from_numpy(
+                np.loadtxt(
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/int_mts_diff_rtrans_data.txt")
+                ).astype(np.float32)
+            )  # 50 entries, internal IOR
+            self.num_theta_samples = 100
+            self.num_alpha_samples = 50
+
+            if use_cuda:
+                self.MTS_TRANS = self.MTS_TRANS.cuda()
+                self.MTS_DIFF_TRANS = self.MTS_DIFF_TRANS.cuda()
+
+    def forward(self, light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha):
+        """
+        light:
+        distance: [..., 1]
+        normal, viewdir: [..., 3]; both normal and viewdir point away from objects
+        diffuse_albedo, specular_albedo: [..., 3]
+        alpha: [..., 1]; roughness
+        """
+        # decay light according to squared-distance falloff
+        light_intensity = light / (distance * distance + 1e-10)
+
+        # <wo, n> = <w_i, n> = <h, n> in colocated setting
+        dot = torch.sum(viewdir * normal, dim=-1, keepdims=True)
+        dot = torch.clamp(dot, min=0.00001, max=0.99999)  # must be very precise; cannot be 0.999
+        # default value of IOR['air'] / IOR['bk7'].
+        m_eta = 1.5046
+        #m_invEta2 = 1.0 / (m_eta * m_eta)
+        m_invEta = 1.0 / m_eta
+
+        # clamp alpha for numeric stability
+        #alpha = torch.clamp(alpha, min=0.0001)
+
+        # specular term: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/roughplastic.cpp#L347
+        ## compute GGX NDF: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/microfacet.h#L191
+        #cosTheta2 = dot * dot
+        #root = cosTheta2 + (1.0 - cosTheta2) / (alpha * alpha + 1e-10)
+        #D = 1.0 / (np.pi * alpha * alpha * root * root + 1e-10)
+        ## compute fresnel: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/libcore/util.cpp#L651
+        # for smooth dielectric surface
+
+        # fresnelDielectricExt
+        R = 0.04
+        T = 1 - R
+        if R < 1:
+            R += T * T * R / (1 - R * R)
+        specular_rgb = light_intensity * specular_albedo * R
+        diffuse_rgb = light_intensity * diffuse_albedo * 0.0001
+        ret = {"diffuse_rgb": diffuse_rgb, "specular_rgb": specular_rgb, "rgb": diffuse_rgb + specular_rgb}
+        return ret
+
+
+class ConductRenderer(nn.Module):
+    def __init__(self, ior_in=, ior_out, use_cuda=False):
+        super().__init__()
+        # https://mitsuba.readthedocs.io/en/stable/src/generated/plugins_bsdfs.html#conductor-ior-list
+        
+    def fresnelConductorExact(self, cosThetaI, eta, k):
+        cosThetaI2 = cosThetaI*cosThetaI
+        sinThetaI2 = 1 - cosThetaI2
+        sinThetaI4 = sinThetaI2 * sinThetaI2
+        temp1 = eta*eta - k*k - sinThetaI2
+        a2pb2 = torch.sqrt(temp1*temp1 + 4*k*k*eta*eta)
+        a = torch.sqrt(0.5*(a2pb2 + temp1))
+        term1 = a2pb2 + cosThetaI2
+        term2 = 2*a*cosThetaI
+        Rs2 = (term1 - term2) / (term1 + term2)
+        term3 = a2pb2 * cosThetaI2 + sinThetaI4
+        term4 = term2 * sinThetaI2
+        Rp2 = Rs2 * (term3 - term4) / (term3 + term4)
+        return 0.5 * (Rp2 + Rs2)
+
+    def forward(self, light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha):
+        """
+        light:
+        distance: [..., 1]
+        normal, viewdir: [..., 3]; both normal and viewdir point away from objects
+        diffuse_albedo, specular_albedo: [..., 3]
+        alpha: [..., 1]; roughness
+        """
+        # decay light according to squared-distance falloff
+        light_intensity = light / (distance * distance + 1e-10)
+
+        dot = torch.sum(viewdir * normal, dim=-1, keepdims=True)
+        dot = torch.clamp(dot, min=0.00001, max=0.99999)  # must be very precise; cannot be 0.999
+
+        m_eta = 1.48958738
+        F = self.fresnelConductorExact(cosThetaI=dot, )
+        specular_rgb = light_intensity * specular_albedo * F
+        diffuse_rgb = light_intensity * diffuse_albedo * 0.0001
+        ret = {"diffuse_rgb": diffuse_rgb, "specular_rgb": specular_rgb, "rgb": diffuse_rgb + specular_rgb}
+        return ret

@@ -474,7 +474,7 @@ class DatasetNIRRGB:
 
         # load NIR images
         try:
-            self.NIR_list = sorted(glob(os.path.join(self.data_nir_dir, '*.png')))
+            self.NIR_list = sorted(glob(os.path.join(self.data_nir_dir, f'*.{self.file_type}')))
             self.NIR_list = [f for f in self.NIR_list if os.path.basename(f) in self.camera_dict]
             self.n_NIR = len(self.NIR_list)
             self.NIR_np = np.stack([self.image_reader(im_name) for im_name in self.NIR_list]) / 255.0
@@ -783,13 +783,17 @@ class DatasetNIRRGB:
                 img = np.clip(self.exr_reader(self.RGB_list[idx])*256, 0, 255)
             if self.RGB_list[idx].endswith(".png"):
                 img = self.image_reader(self.RGB_list[idx])
+            if self.RGB_list[idx].endswith(".jpg"):
+                img = self.image_reader(self.RGB_list[idx])
         elif data_type == 'nir':
             if self.NIR_list[idx].endswith(".exr"):
                 img = np.clip(self.exr_reader(self.NIR_list[idx])*256, 0, 255)
             if self.NIR_list[idx].endswith(".png"):
                 img = self.image_reader(self.NIR_list[idx])
+            if self.NIR_list[idx].endswith(".jpg"):
+                img = self.image_reader(self.NIR_list[idx])
         else:
-            pass
+            print('not file find')
         return (cv2.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255).astype(np.uint8)
 
 
