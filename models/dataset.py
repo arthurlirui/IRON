@@ -1,9 +1,8 @@
 import torch
 import torch.nn.functional as F
-#import cv2 as cv
 import numpy as np
 import os
-from glob import glob
+import glob
 from icecream import ic
 from scipy.spatial.transform import Rotation as Rot
 from scipy.spatial.transform import Slerp
@@ -795,6 +794,140 @@ class DatasetNIRRGB:
         else:
             print('not file find')
         return (cv2.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255).astype(np.uint8)
+
+
+###### load dataset
+def to8b(x):
+    return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)
+
+
+def load_dataset_NIRRGB(datadir, folder_name='rgb'):
+    imglist = glob.glob(os.path.join(datadir, folder_name, '*.*'))
+    with open(os.path.join(datadir, 'cam_dict_norm.json')) as f:
+        cam_dict = json.load(f)
+
+    # cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
+    # imgnames = list(cam_dict.keys())
+    # try:
+    #     imgnames = sorted(imgnames, key=lambda x: int(x[:-4]))
+    # except:
+    #     imgnames = sorted(imgnames)
+
+    image_fpaths = []
+    gt_images = []
+    Ks = []
+    W2Cs = []
+    imgtype = 'png'
+    imreader = None
+    imwriter = None
+    if len(imglist) > 0:
+        x = imglist[0]
+        if x.endswith('png') or x.endswith('jpg'):
+            imreader = image_reader('imageio')
+            imwriter = image_writer('imageio')
+        if x.endswith('exr'):
+            imreader = exr_reader('pyexr')
+            imwriter = image_writer('pyexr')
+
+    # load file from folder image
+    for x in imglist:
+        # if x.endswith('png') or x.endswith('jpg'):
+        #    fpath = os.path.join(datadir, 'image', x)
+        # if False:
+        #     if x[-4:] == imgtype:
+        #         fpath = os.path.join(datadir, imgtype, x)
+        #     else:
+        #         fpath = os.path.join(datadir, imgtype, x[:-4] + '.' + imgtype)
+        #     assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
+        #     im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        filename = os.path.basename(x)
+        if filename.endswith('png') or filename.endswith('jpg'):
+            im = imreader(x)/255.0
+        if filename.endswith('exr'):
+            im = imreader(x)
+        fpath = x
+
+
+        # if True:
+        #     filename = x.split('.')[0]
+        #     if os.path.exists(os.path.join(datadir, folder_name, filename + '.png')):
+        #         fpath = os.path.join(datadir, folder_name, filename + '.png')
+        #         im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        #     elif os.path.exists(os.path.join(datadir, folder_name, filename + '.jpg')):
+        #         fpath = os.path.join(datadir, folder_name, filename + '.jpg')
+        #         im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        #     elif os.path.exists(os.path.join(datadir, folder_name, filename + '.exr')):
+        #         fpath = os.path.join(datadir, folder_name, filename + '.exr')
+        #         im = imageio.v3.imread(fpath)
+        #         im = np.clip(np.power(im, 1.0 / 2.2), 0, 1)  # gamma correction
+        #     else:
+        #         assert fpath[-4:] in [".jpg", ".png", ".exr"], "must use ldr images as inputs"
+
+        if not filename in cam_dict:
+            continue
+        K = np.array(cam_dict[filename]["K"]).reshape((4, 4)).astype(np.float32)
+        W2C = np.array(cam_dict[filename]["W2C"]).reshape((4, 4)).astype(np.float32)
+
+        image_fpaths.append(fpath)
+        gt_images.append(torch.from_numpy(im))
+        Ks.append(torch.from_numpy(K))
+        W2Cs.append(torch.from_numpy(W2C))
+    gt_images = torch.stack(gt_images, dim=0)
+    Ks = torch.stack(Ks, dim=0)
+    W2Cs = torch.stack(W2Cs, dim=0)
+    return image_fpaths, gt_images, Ks, W2Cs
+
+
+def load_datadir(datadir, folder_name='image'):
+    cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
+    imgnames = list(cam_dict.keys())
+    try:
+        imgnames = sorted(imgnames, key=lambda x: int(x[:-4]))
+    except:
+        imgnames = sorted(imgnames)
+
+    image_fpaths = []
+    gt_images = []
+    Ks = []
+    W2Cs = []
+    imgtype = 'png'
+    # load file from folder image
+    for x in imgnames:
+        #if x.endswith('png') or x.endswith('jpg'):
+        #    fpath = os.path.join(datadir, 'image', x)
+        if False:
+            if x[-4:] == imgtype:
+                fpath = os.path.join(datadir, imgtype, x)
+            else:
+                fpath = os.path.join(datadir, imgtype, x[:-4]+'.'+imgtype)
+            assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
+            im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+        if True:
+            filename = x.split('.')[0]
+            if os.path.exists(os.path.join(datadir, folder_name, filename+'.png')):
+                fpath = os.path.join(datadir, folder_name, filename+'.png')
+                im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+            elif os.path.exists(os.path.join(datadir, folder_name, filename+'.jpg')):
+                fpath = os.path.join(datadir, folder_name, filename + '.jpg')
+                im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
+            elif os.path.exists(os.path.join(datadir, folder_name, filename+'.exr')):
+                fpath = os.path.join(datadir, folder_name, filename + '.exr')
+                im = imageio.v3.imread(fpath)
+                im = np.clip(np.power(im, 1.0/2.2), 0, 1)    # gamma correction
+            else:
+                assert fpath[-4:] in [".jpg", ".png", ".exr"], "must use ldr images as inputs"
+
+        K = np.array(cam_dict[x]["K"]).reshape((4, 4)).astype(np.float32)
+        W2C = np.array(cam_dict[x]["W2C"]).reshape((4, 4)).astype(np.float32)
+
+        image_fpaths.append(fpath)
+        gt_images.append(torch.from_numpy(im))
+        Ks.append(torch.from_numpy(K))
+        W2Cs.append(torch.from_numpy(W2C))
+    gt_images = torch.stack(gt_images, dim=0)
+    Ks = torch.stack(Ks, dim=0)
+    W2Cs = torch.stack(W2Cs, dim=0)
+    return image_fpaths, gt_images, Ks, W2Cs
 
 
 if __name__ == '__main__':

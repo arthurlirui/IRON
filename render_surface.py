@@ -3,20 +3,15 @@ import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
-import json
 import imageio
 imageio.plugins.freeimage.download()
 from torch.utils.tensorboard import SummaryWriter
 import configargparse
 from icecream import ic
 import glob
-import shutil
 import traceback
 
 from models.network_conf import init_sdf_network_dict, init_rendering_network_dict
-from models.network_conf import PointLightNetwork
-
-from models.fields import SDFNetwork, RenderingNetwork
 from models.raytracer import RayTracer, Camera, render_camera
 from models.renderer_ggx import GGXColocatedRenderer
 
@@ -29,9 +24,11 @@ from models.renderer_ggx import CoLocRenderer
 from models.image_losses import PyramidL2Loss, ssim_loss_fn
 from models.export_mesh import export_mesh, export_mesh_no_translation
 from models.export_materials import export_materials
+from models.rendering_func import get_materials, get_materials_exp
 
 import kornia
 from models.dataset import image_reader, image_writer, exr_writer, exr_reader
+from models.dataset import to8b, load_dataset_NIRRGB, load_datadir
 
 #from torchmetrics.functional import image_gradients
 ###### arguments
@@ -82,295 +79,10 @@ ic(args)
 os.makedirs(args.out_dir, exist_ok=True)
 parser.write_config_file(args, [os.path.join(args.out_dir, "args.txt")])
 
-from models.rendering_func import get_materials, get_materials_exp
-from models.rendering_func import render_fn
-
-# ###### rendering functions
-# def get_materials(color_network_dict, points, normals, features, is_metal=args.is_metal):
-#     diffuse_albedo = color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[
-#         ..., [2, 1, 0]
-#     ]
-#     specular_albedo = color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
-#     if not is_metal:
-#         specular_albedo = torch.mean(specular_albedo, dim=-1, keepdim=True).expand_as(specular_albedo)
-#     specular_roughness = color_network_dict["specular_roughness_network"](points, normals, None, features).abs() + 0.01
-#     return diffuse_albedo, specular_albedo, specular_roughness
-#
-#
-# def get_materials_exp(color_network_dict, points, normals, features, is_metal=args.is_metal):
-#     diffuse_albedo = color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[
-#         ..., [2, 1, 0]
-#     ]
-#     specular_albedo = color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
-#     #if not is_metal:
-#     #    specular_albedo = torch.mean(specular_albedo, dim=-1, keepdim=True).expand_as(specular_albedo)
-#     specular_roughness = color_network_dict["specular_roughness_network"](points, normals, None, features).abs() + 0.01
-#     material_vector = color_network_dict["material_network"](points, normals, None, features).abs()
-#     return diffuse_albedo, specular_albedo, specular_roughness, material_vector
-#
-#
-# def render_fn(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
-#     dots_sh = list(interior_mask.shape)
-#     rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
-#     diffuse_rgb = rgb.clone()
-#     specular_rgb = rgb.clone()
-#     diffuse_albedo = rgb.clone()
-#     specular_albedo = rgb.clone()
-#     specular_roughness = rgb[..., 0].clone()
-#     material_tensor = torch.zeros(dots_sh + [4], dtype=torch.float32, device=interior_mask.device)
-#     normals_pad = rgb.clone()
-#
-#     dielectric_specular = rgb.clone()
-#     conduct_specular = rgb.clone()
-#
-#     if interior_mask.any():
-#         normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
-#         # interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness = get_materials(
-#         #     color_network_dict, points, normals, features
-#         # )
-#         outputs = get_materials_exp(color_network_dict, points, normals, features)
-#         interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness, material_vector = outputs
-#         results = ggx_renderer(
-#             color_network_dict["point_light_network"](),
-#             (points - ray_o).norm(dim=-1, keepdim=True),
-#             normals,
-#             -ray_d,
-#             interior_diffuse_albedo,
-#             interior_specular_albedo,
-#             interior_specular_roughness,
-#         )
-#
-#         # results_dielectric = dielectric_renderer(
-#         #     color_network_dict["point_light_network"](),
-#         #     (points - ray_o).norm(dim=-1, keepdim=True),
-#         #     normals,
-#         #     -ray_d,
-#         #     interior_diffuse_albedo,
-#         #     interior_specular_albedo,
-#         #     interior_specular_roughness,
-#         # )
-#         #
-#         # results_conduct = conduct_renderer(
-#         #     color_network_dict["point_light_network"](),
-#         #     (points - ray_o).norm(dim=-1, keepdim=True),
-#         #     normals,
-#         #     -ray_d,
-#         #     interior_diffuse_albedo,
-#         #     interior_specular_albedo,
-#         #     interior_specular_roughness,
-#         # )
-#         #
-#         # dielectric_specular[interior_mask] = results_dielectric["specular_rgb"]
-#         # conduct_specular[interior_mask] = results_conduct["specular_rgb"]
-#
-#         rgb[interior_mask] = results["rgb"]
-#         diffuse_rgb[interior_mask] = results["diffuse_rgb"]
-#         specular_rgb[interior_mask] = results["specular_rgb"]
-#         diffuse_albedo[interior_mask] = interior_diffuse_albedo
-#         specular_albedo[interior_mask] = interior_specular_albedo
-#         specular_roughness[interior_mask] = interior_specular_roughness.squeeze(-1)
-#         normals_pad[interior_mask] = normals
-#
-#     return {
-#         "color": rgb,
-#         "dielectric_specular": dielectric_specular,
-#         "conduct_specular": conduct_specular,
-#         "diffuse_color": diffuse_rgb,
-#         "specular_color": specular_rgb,
-#         "diffuse_albedo": diffuse_albedo,
-#         "specular_albedo": specular_albedo,
-#         "specular_roughness": specular_roughness,
-#         "normal": normals_pad,
-#     }
-#
-#
-# def render_fn_exp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
-#     dots_sh = list(interior_mask.shape)
-#     rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
-#     diffuse_rgb = rgb.clone()
-#     specular_rgb = rgb.clone()
-#     diffuse_albedo = rgb.clone()
-#     specular_albedo = rgb.clone()
-#     specular_roughness = rgb[..., 0].clone()
-#     material_vector = torch.zeros(dots_sh + [4], dtype=torch.float32, device=interior_mask.device)
-#     normals_pad = rgb.clone()
-#
-#     #dielectric_specular = rgb.clone()
-#     #conduct_specular = rgb.clone()
-#
-#     if interior_mask.any():
-#         normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
-#         # interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness = get_materials(
-#         #     color_network_dict, points, normals, features
-#         # )
-#         outputs = get_materials_exp(color_network_dict, points, normals, features)
-#         interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness, interior_material_vector = outputs
-#
-#         results = full_renderer(
-#             color_network_dict["point_light_network"](),
-#             (points - ray_o).norm(dim=-1, keepdim=True),
-#             normals,
-#             -ray_d,
-#             interior_diffuse_albedo,
-#             interior_specular_albedo,
-#             interior_specular_roughness,
-#             interior_material_vector
-#         )
-#
-#         # results = ggx_renderer(
-#         #     color_network_dict["point_light_network"](),
-#         #     (points - ray_o).norm(dim=-1, keepdim=True),
-#         #     normals,
-#         #     -ray_d,
-#         #     interior_diffuse_albedo,
-#         #     interior_specular_albedo,
-#         #     interior_specular_roughness,
-#         # )
-#         #
-#         # results_dielectric = dielectric_renderer(
-#         #     color_network_dict["point_light_network"](),
-#         #     (points - ray_o).norm(dim=-1, keepdim=True),
-#         #     normals,
-#         #     -ray_d,
-#         #     interior_diffuse_albedo,
-#         #     interior_specular_albedo,
-#         #     interior_specular_roughness,
-#         # )
-#         #
-#         # results_conduct = conduct_renderer(
-#         #     color_network_dict["point_light_network"](),
-#         #     (points - ray_o).norm(dim=-1, keepdim=True),
-#         #     normals,
-#         #     -ray_d,
-#         #     interior_diffuse_albedo,
-#         #     interior_specular_albedo,
-#         #     interior_specular_roughness,
-#         # )
-#
-#         #dielectric_specular[interior_mask] = results_dielectric["specular_rgb"]
-#         #conduct_specular[interior_mask] = results_conduct["specular_rgb"]
-#
-#         rgb[interior_mask] = results["rgb"]
-#         diffuse_rgb[interior_mask] = results["diffuse_rgb"]
-#         specular_rgb[interior_mask] = results["specular_rgb"]
-#         material_vector[interior_mask] = results["material_map"]
-#         diffuse_albedo[interior_mask] = interior_diffuse_albedo
-#         specular_albedo[interior_mask] = interior_specular_albedo
-#         specular_roughness[interior_mask] = interior_specular_roughness.squeeze(-1)
-#         normals_pad[interior_mask] = normals
-#
-#     return {
-#         "color": rgb,
-#         #"dielectric_specular": dielectric_specular,
-#         #"conduct_specular": conduct_specular,
-#         "material_map": material_vector,
-#         "diffuse_color": diffuse_rgb,
-#         "specular_color": specular_rgb,
-#         "diffuse_albedo": diffuse_albedo,
-#         "specular_albedo": specular_albedo,
-#         "specular_roughness": specular_roughness,
-#         "normal": normals_pad,
-#     }
-
-
-###### network specifications
-# sdf_network = SDFNetwork(
-#     d_in=3,
-#     d_out=257,
-#     d_hidden=256,
-#     n_layers=8,
-#     skip_in=[4,],
-#     multires=6,
-#     bias=0.5,
-#     scale=1.0,
-#     geometric_init=True,
-#     weight_norm=True,
-# ).cuda()
 raytracer = RayTracer()
 sdf_network = init_sdf_network_dict()
 color_network_dict = init_rendering_network_dict()
 
-# class PointLightNetwork(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         self.register_parameter("light", nn.Parameter(torch.tensor(5.0)))
-#
-#     def forward(self):
-#         return self.light
-#
-#     def set_light(self, light):
-#         self.light.data.fill_(light)
-#
-#     def get_light(self):
-#         return self.light.data.clone().detach()
-
-
-# color_network_dict = {
-#     "color_network": RenderingNetwork(
-#         d_in=9,
-#         d_out=3,
-#         d_feature=256,
-#         d_hidden=256,
-#         n_layers=4,
-#         multires_view=4,
-#         mode="idr",
-#         squeeze_out=True,
-#     ).cuda(),
-#     "diffuse_albedo_network": RenderingNetwork(
-#         d_in=9,
-#         d_out=3,
-#         d_feature=256,
-#         d_hidden=256,
-#         n_layers=8,
-#         multires=10,
-#         multires_view=4,
-#         mode="idr",
-#         squeeze_out=True,
-#         skip_in=(4,),
-#     ).cuda(),
-#     "material_network": RenderingNetwork(
-#         d_in=6,
-#         d_out=4,
-#         d_feature=256,
-#         d_hidden=256,
-#         n_layers=4,
-#         multires=6,
-#         multires_view=-1,
-#         mode="no_view_dir",
-#         squeeze_out=False,
-#         output_bias=0.1,
-#         output_scale=0.1,
-#         ).cuda(),
-#     "specular_albedo_network": RenderingNetwork(
-#         d_in=6,
-#         d_out=3,
-#         d_feature=256,
-#         d_hidden=256,
-#         n_layers=4,
-#         multires=6,
-#         multires_view=-1,
-#         mode="no_view_dir",
-#         squeeze_out=False,
-#         output_bias=0.4,
-#         output_scale=0.1,
-#     ).cuda(),
-#     "specular_roughness_network": RenderingNetwork(
-#         d_in=6,
-#         d_out=1,
-#         d_feature=256,
-#         d_hidden=256,
-#         n_layers=4,
-#         multires=6,
-#         multires_view=-1,
-#         mode="no_view_dir",
-#         squeeze_out=False,
-#         output_bias=0.1,
-#         output_scale=0.1,
-#     ).cuda(),
-#     "point_light_network": PointLightNetwork().cuda(),
-# }
-
-###### optimizer specifications
 sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
 color_optimizer_dict = {
     "color_network": torch.optim.Adam(color_network_dict["color_network"].parameters(), lr=1e-4),
@@ -380,6 +92,7 @@ color_optimizer_dict = {
     "material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-2),
     "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
 }
+
 
 def render_fn_exp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
     dots_sh = list(interior_mask.shape)
@@ -441,144 +154,8 @@ full_renderer = CoLocRenderer(rough_plastic=rough_plastic_renderer,
                               dielectric=dielectric_renderer,
                               smooth_conductor=conductor_renderer,
                               conductor=rought_conductor_renderer, use_cuda=True)
-#ggx_renderer = conduct_renderer
-#ggx_renderer = dielectric_renderer
 
 pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
-
-###### load dataset
-def to8b(x):
-    return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)
-
-
-def load_dataset_NIRRGB(datadir, folder_name='rgb'):
-    imglist = glob.glob(os.path.join(datadir, folder_name, '*.*'))
-    with open(os.path.join(datadir, 'cam_dict_norm.json')) as f:
-        cam_dict = json.load(f)
-
-    # cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
-    # imgnames = list(cam_dict.keys())
-    # try:
-    #     imgnames = sorted(imgnames, key=lambda x: int(x[:-4]))
-    # except:
-    #     imgnames = sorted(imgnames)
-
-    image_fpaths = []
-    gt_images = []
-    Ks = []
-    W2Cs = []
-    imgtype = 'png'
-    imreader = None
-    imwriter = None
-    if len(imglist) > 0:
-        x = imglist[0]
-        if x.endswith('png') or x.endswith('jpg'):
-            imreader = image_reader('imageio')
-            imwriter = image_writer('imageio')
-        if x.endswith('exr'):
-            imreader = exr_reader('pyexr')
-            imwriter = image_writer('pyexr')
-
-    # load file from folder image
-    for x in imglist:
-        # if x.endswith('png') or x.endswith('jpg'):
-        #    fpath = os.path.join(datadir, 'image', x)
-        # if False:
-        #     if x[-4:] == imgtype:
-        #         fpath = os.path.join(datadir, imgtype, x)
-        #     else:
-        #         fpath = os.path.join(datadir, imgtype, x[:-4] + '.' + imgtype)
-        #     assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
-        #     im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
-        filename = os.path.basename(x)
-        if filename.endswith('png') or filename.endswith('jpg'):
-            im = imreader(x)/255.0
-        if filename.endswith('exr'):
-            im = imreader(x)
-        fpath = x
-
-
-        # if True:
-        #     filename = x.split('.')[0]
-        #     if os.path.exists(os.path.join(datadir, folder_name, filename + '.png')):
-        #         fpath = os.path.join(datadir, folder_name, filename + '.png')
-        #         im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
-        #     elif os.path.exists(os.path.join(datadir, folder_name, filename + '.jpg')):
-        #         fpath = os.path.join(datadir, folder_name, filename + '.jpg')
-        #         im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
-        #     elif os.path.exists(os.path.join(datadir, folder_name, filename + '.exr')):
-        #         fpath = os.path.join(datadir, folder_name, filename + '.exr')
-        #         im = imageio.v3.imread(fpath)
-        #         im = np.clip(np.power(im, 1.0 / 2.2), 0, 1)  # gamma correction
-        #     else:
-        #         assert fpath[-4:] in [".jpg", ".png", ".exr"], "must use ldr images as inputs"
-
-        if not filename in cam_dict:
-            continue
-        K = np.array(cam_dict[filename]["K"]).reshape((4, 4)).astype(np.float32)
-        W2C = np.array(cam_dict[filename]["W2C"]).reshape((4, 4)).astype(np.float32)
-
-        image_fpaths.append(fpath)
-        gt_images.append(torch.from_numpy(im))
-        Ks.append(torch.from_numpy(K))
-        W2Cs.append(torch.from_numpy(W2C))
-    gt_images = torch.stack(gt_images, dim=0)
-    Ks = torch.stack(Ks, dim=0)
-    W2Cs = torch.stack(W2Cs, dim=0)
-    return image_fpaths, gt_images, Ks, W2Cs
-
-
-def load_datadir(datadir, folder_name='image'):
-    cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
-    imgnames = list(cam_dict.keys())
-    try:
-        imgnames = sorted(imgnames, key=lambda x: int(x[:-4]))
-    except:
-        imgnames = sorted(imgnames)
-
-    image_fpaths = []
-    gt_images = []
-    Ks = []
-    W2Cs = []
-    imgtype = 'png'
-    # load file from folder image
-    for x in imgnames:
-        #if x.endswith('png') or x.endswith('jpg'):
-        #    fpath = os.path.join(datadir, 'image', x)
-        if False:
-            if x[-4:] == imgtype:
-                fpath = os.path.join(datadir, imgtype, x)
-            else:
-                fpath = os.path.join(datadir, imgtype, x[:-4]+'.'+imgtype)
-            assert fpath[-4:] in [".jpg", ".png"], "must use ldr images as inputs"
-            im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
-        if True:
-            filename = x.split('.')[0]
-            if os.path.exists(os.path.join(datadir, folder_name, filename+'.png')):
-                fpath = os.path.join(datadir, folder_name, filename+'.png')
-                im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
-            elif os.path.exists(os.path.join(datadir, folder_name, filename+'.jpg')):
-                fpath = os.path.join(datadir, folder_name, filename + '.jpg')
-                im = imageio.v3.imread(fpath).astype(np.float32) / 255.0
-            elif os.path.exists(os.path.join(datadir, folder_name, filename+'.exr')):
-                fpath = os.path.join(datadir, folder_name, filename + '.exr')
-                im = imageio.v3.imread(fpath)
-                im = np.clip(np.power(im, 1.0/2.2), 0, 1)    # gamma correction
-            else:
-                assert fpath[-4:] in [".jpg", ".png", ".exr"], "must use ldr images as inputs"
-
-        K = np.array(cam_dict[x]["K"]).reshape((4, 4)).astype(np.float32)
-        W2C = np.array(cam_dict[x]["W2C"]).reshape((4, 4)).astype(np.float32)
-
-        image_fpaths.append(fpath)
-        gt_images.append(torch.from_numpy(im))
-        Ks.append(torch.from_numpy(K))
-        W2Cs.append(torch.from_numpy(W2C))
-    gt_images = torch.stack(gt_images, dim=0)
-    Ks = torch.stack(Ks, dim=0)
-    W2Cs = torch.stack(W2Cs, dim=0)
-    return image_fpaths, gt_images, Ks, W2Cs
-
 
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 #RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
@@ -650,7 +227,6 @@ def export_mesh_and_materials(export_out_dir, sdf_network, color_network_dict):
             mesh_name = 'mesh_no_translation.obj'
             export_mesh_no_translation(sdf_fn, os.path.join(export_out_dir, mesh_name))
             os.system(f"{blender_fpath} --background --python models/export_uv.py {os.path.join(export_out_dir, mesh_name)} {os.path.join(export_out_dir, mesh_name)}")
-
 
     class MaterialPredictor(nn.Module):
         def __init__(self, sdf_network, color_network_dict):
