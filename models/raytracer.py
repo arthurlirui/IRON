@@ -631,8 +631,8 @@ def render_normal_and_color(
     """
     results: returned by raytrace_pixels function
 
-    render interior and freespace pixels
-    note: predicted color is black for freespace pixels
+    render interior and free space pixels
+    note: predicted color is black for free space pixels
     """
     dots_sh = list(results["convergent_mask"].shape)
 
@@ -690,12 +690,7 @@ def render_normal_and_color(
                     merge_render_results[x].append(render_results[x])
 
     for x in list(merge_render_results.keys()):
-        tmp = torch.cat(merge_render_results[x], dim=0).reshape(
-            dots_sh
-            + [
-                -1,
-            ]
-        )
+        tmp = torch.cat(merge_render_results[x], dim=0).reshape(dots_sh + [-1])
         if tmp.shape[-1] == 1:
             tmp = tmp.squeeze(-1)
         merge_render_results[x] = tmp
