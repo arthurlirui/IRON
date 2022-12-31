@@ -153,7 +153,7 @@ class Dataset:
 
         folder_name = self.conf['folder_name'] if 'folder_name' in self.conf else 'image'
         try:
-            self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.png")))
+            self.images_lis = sorted(glob.glob(os.path.join(self.data_dir, f"{folder_name}/*.png")))
             self.n_images = len(self.images_lis)
             self.images_np = np.stack([self.image_reader(im_name) for im_name in self.images_lis]) / 255.0
             # print('min max:', np.min(self.images_np[:]), np.max(self.images_np[:]))
@@ -162,7 +162,7 @@ class Dataset:
             print("Loading png images failed; try loading exr images")
             if False:
                 import pyexr
-                self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
+                self.images_lis = sorted(glob.glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
                 self.n_images = len(self.images_lis)
                 # self.images_np = np.clip(
                 #     np.power(np.stack([pyexr.open(im_name).get()[:, :, ::-1] for im_name in self.images_lis]),
@@ -173,7 +173,7 @@ class Dataset:
                 self.images_np = np.clip(np.stack([self.exr_reader(im_name) for im_name in self.images_lis]), 0.0, 1.0)
             else:
                 #import imageio
-                self.images_lis = sorted(glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
+                self.images_lis = sorted(glob.glob(os.path.join(self.data_dir, f"{folder_name}/*.exr")))
                 self.n_images = len(self.images_lis)
                 self.images_np = np.stack([self.exr_reader(im_name) for im_name in self.images_lis])
 
@@ -184,7 +184,7 @@ class Dataset:
             self.masks_np = np.ones_like(self.images_np)
         else:
             try:
-                self.masks_lis = sorted(glob(os.path.join(self.data_dir, "mask/*.png")))
+                self.masks_lis = sorted(glob.glob(os.path.join(self.data_dir, "mask/*.png")))
                 self.masks_np = np.stack([cv2.imread(im_name) for im_name in self.masks_lis]) / 255.0
             except:
                 # traceback.print_exc()
@@ -401,8 +401,8 @@ class DatasetNIRRGB:
                 cam_dict_list.append(nir_camera_dict)
         if True:
             self.camera_dict = None
-            if os.path.exists(os.path.join(self.data_dir, 'cam_dict.json')):
-                with open(os.path.join(self.data_dir, 'cam_dict.json')) as f:
+            if os.path.exists(os.path.join(self.data_dir, 'cam_dict_norm.json')):
+                with open(os.path.join(self.data_dir, 'cam_dict_norm.json')) as f:
                     camera_dict = json.load(fp=f)
                     #cam_dict_list.extend(camera_dict)
                     self.camera_dict = camera_dict
@@ -461,25 +461,25 @@ class DatasetNIRRGB:
 
         # load RGB images
         try:
-            self.RGB_list = sorted(glob(os.path.join(self.data_rgb_dir, f'*.{self.file_type}')))
+            self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, f'*.{self.file_type}')))
             self.RGB_list = [f for f in self.RGB_list if os.path.basename(f) in self.camera_dict]
             self.n_RGB = len(self.RGB_list)
             self.RGB_np = np.stack([self.image_reader(im_name) for im_name in self.RGB_list]) / 255.0
         except:
             print("Loading png images failed; try loading exr images")
-            self.RGB_list = sorted(glob(os.path.join(self.data_rgb_dir, '*.exr')))
+            self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, '*.exr')))
             self.n_RGB = len(self.RGB_list)
             self.RGB_np = np.stack([self.exr_reader(im_name) for im_name in self.RGB_list])
 
         # load NIR images
         try:
-            self.NIR_list = sorted(glob(os.path.join(self.data_nir_dir, f'*.{self.file_type}')))
+            self.NIR_list = sorted(glob.glob(os.path.join(self.data_nir_dir, f'*.{self.file_type}')))
             self.NIR_list = [f for f in self.NIR_list if os.path.basename(f) in self.camera_dict]
             self.n_NIR = len(self.NIR_list)
             self.NIR_np = np.stack([self.image_reader(im_name) for im_name in self.NIR_list]) / 255.0
         except:
             print("Loading png images failed; try loading exr images")
-            self.NIR_list = sorted(glob(os.path.join(self.data_nir_dir, '*.exr')))
+            self.NIR_list = sorted(glob.glob(os.path.join(self.data_nir_dir, '*.exr')))
             self.n_NIR = len(self.NIR_list)
             self.NIR_np = np.stack([self.exr_reader(im_name) for im_name in self.NIR_list])
 
@@ -492,7 +492,7 @@ class DatasetNIRRGB:
             self.masks_NIR_np = np.ones_like(self.NIR_np)
         else:
             try:
-                self.masks_lis = sorted(glob(os.path.join(self.data_dir, 'mask', f'*.{self.file_type}')))
+                self.masks_lis = sorted(glob.glob(os.path.join(self.data_dir, 'mask', f'*.{self.file_type}')))
                 self.masks_np = np.stack([cv2.imread(im_name) for im_name in self.masks_lis]) / 255.0
             except:
                 # traceback.print_exc()

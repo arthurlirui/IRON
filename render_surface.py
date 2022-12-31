@@ -30,6 +30,9 @@ import kornia
 from models.dataset import image_reader, image_writer, exr_writer, exr_reader
 from models.dataset import to8b, load_dataset_NIRRGB, load_datadir
 
+from models.helper import gamma_correction, inv_gamma_correction
+from models.dataset import image_writer, image_reader
+
 #from torchmetrics.functional import image_gradients
 ###### arguments
 def config_parser():
@@ -276,28 +279,26 @@ if args.render_all:
             is_training=False,
         )
         if args.gamma_pred:
-            results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
-            results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
+            results["color"] = gamma_correction(results["color"], g=2.2)
+            results["diffuse_color"] = gamma_correction(results["diffuse_color"], g=2.2)
+            #results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
+            #results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
             results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
         for x in list(results.keys()):
             results[x] = results[x].detach().cpu().numpy()
         color_im = results["color"]
-        imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0] + '.jpg'), to8b(color_im))
+        timgname = os.path.basename(impath).split('.')[0]
+        imageio.imwrite(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
 
         if True:
             normal = results["normal"]
             normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
             normal_im = (normal + 1.0) / 2.0
-            imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0] + '_normal.jpg'),
-                            to8b(normal_im))
+            imageio.imwrite(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
             diff_im = results["diffuse_color"]
-            imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0] + '_diff.jpg'),
-                            to8b(diff_im))
+            imageio.imwrite(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
             specular_im = results["specular_color"]
-            imageio.imwrite(os.path.join(render_out_dir, os.path.basename(impath).split('.')[0] + '_specular.jpg'),
-                            to8b(specular_im))
-
-
+            imageio.imwrite(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
     exit(0)
 
 ###### training
@@ -332,8 +333,10 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         is_training=is_training,
     )
     if args.gamma_pred:
-        results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
-        results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
+        #results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
+        #results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
+        results["color"] = gamma_correction(results["color"])
+        results["diffuse_color"] = gamma_correction(results["diffuse_color"])
         results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
 
         w = (results['distance'] / (init_light * torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1e-6))
@@ -347,6 +350,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     img_l2_loss = torch.Tensor([0.0]).cuda()
     img_ssim_loss = torch.Tensor([0.0]).cuda()
     roughrange_loss = torch.Tensor([0.0]).cuda()
+    material_type_loss = torch.Tensor([0.0]).cuda()
 
     eik_points = torch.empty(camera_crop.H * camera_crop.W // 2, 3).cuda().float().uniform_(-1.0, 1.0)
     eik_grad = sdf_network.gradient(eik_points).view(-1, 3)
@@ -382,9 +386,12 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         roughness = roughness[roughness > 0.5]
         if roughness.numel() > 0:
             roughrange_loss = (roughness - 0.5).mean() * args.roughrange_weight
+
+        # constraint for material map
+        material_type_loss = torch.norm(torch.sum(torch.abs(results["material_map"]), dim=-1) - 1, p=2)
     eik_loss = eik_loss / eik_cnt * args.eik_weight
 
-    loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss
+    loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + material_type_loss
 
     loss.backward()
     sdf_optimizer.step()
@@ -399,6 +406,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         writer.add_scalar("loss/eik_loss", eik_loss, global_step)
         writer.add_scalar("loss/roughrange_loss", roughrange_loss, global_step)
         writer.add_scalar("loss/sparse_loss", sparse_loss, global_step)
+        writer.add_scalar("loss/material_type_loss", material_type_loss, global_step)
         writer.add_scalar("light", color_network_dict["point_light_network"].get_light())
 
     if global_step % 1000 == 0:
@@ -494,17 +502,22 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
 
         gt_color_im = gt_color_im[..., :3]
         normal_im = normal_im[..., :3]
-        row1 = np.concatenate([gt_color_im, normal_im, edge_mask_im], axis=1)
+        #row1 = np.concatenate([gt_color_im, normal_im, edge_mask_im], axis=1)
         #row2 = np.concatenate([color_im, diffuse_color_im, specular_color_im], axis=1)
 
-        row2 = np.concatenate([color_im, diffuse_color_im, material_map3], axis=1)
+        #row2 = np.concatenate([color_im, diffuse_color_im, material_map3], axis=1)
 
-        row3 = np.concatenate([diffuse_albedo_im, specular_albedo_im, specular_roughness_im], axis=1)
+        #row3 = np.concatenate([diffuse_albedo_im, specular_albedo_im, specular_roughness_im], axis=1)
 
-        row4 = np.concatenate([rough_plastic_map, dielectric_map, rough_conductor_map], axis=1)
-        row4 = np.stack([row4, row4, row4], axis=-1)
+        #row4 = np.concatenate([rough_plastic_map, dielectric_map, rough_conductor_map], axis=1)
+        #row4 = np.stack([row4, row4, row4], axis=-1)
 
-        im = np.concatenate((row1, row2, row3, row4), axis=0)
+        #im = np.concatenate((row1, row2, row3, row4), axis=0)
+        from models.helper import concatenate_result
+        img_list = [gt_color_im, normal_im, edge_mask_im,
+                    color_im, diffuse_color_im, material_map3,
+                    rough_plastic_map, dielectric_map, rough_conductor_map]
+        im = concatenate_result(image_list=img_list, imarray_length=3)
         imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))
 
 
