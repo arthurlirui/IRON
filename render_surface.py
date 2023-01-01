@@ -351,6 +351,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     img_ssim_loss = torch.Tensor([0.0]).cuda()
     roughrange_loss = torch.Tensor([0.0]).cuda()
     material_type_loss = torch.Tensor([0.0]).cuda()
+    material_sparse_loss = torch.Tensor([0.0]).cuda()
 
     eik_points = torch.empty(camera_crop.H * camera_crop.W // 2, 3).cuda().float().uniform_(-1.0, 1.0)
     eik_grad = sdf_network.gradient(eik_points).view(-1, 3)
@@ -388,10 +389,13 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             roughrange_loss = (roughness - 0.5).mean() * args.roughrange_weight
 
         # constraint for material map
-        material_type_loss = torch.norm(torch.sum(torch.abs(results["material_map"]), dim=-1) - 1, p=2)
+        material_type_loss = torch.norm(torch.sum(torch.abs(results["material_map"]), dim=-1) - 1.0, p=2)
+        #material_sparse_loss = torch.norm(torch.abs(torch.max(results["material_map"], dim=-1)[0] - 1.0), p=1)
+        material_sparse_loss = torch.norm(results["material_map"], p=1)
     eik_loss = eik_loss / eik_cnt * args.eik_weight
 
-    loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + material_type_loss
+    loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + 0.0 * material_type_loss + 0.1 * material_sparse_loss
+    #loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + material_type_loss
 
     loss.backward()
     sdf_optimizer.step()
@@ -407,6 +411,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         writer.add_scalar("loss/roughrange_loss", roughrange_loss, global_step)
         writer.add_scalar("loss/sparse_loss", sparse_loss, global_step)
         writer.add_scalar("loss/material_type_loss", material_type_loss, global_step)
+        writer.add_scalar("loss/material_spare_loss", material_type_loss, global_step)
         writer.add_scalar("light", color_network_dict["point_light_network"].get_light())
 
     if global_step % 1000 == 0:
@@ -481,10 +486,11 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         specular_albedo_im = results["specular_albedo"]
         specular_roughness_im = np.tile(results["specular_roughness"][:, :, np.newaxis], (1, 1, 3))
 
-        rough_plastic_map = results["material_map"][..., 0]
-        dielectric_map = results["material_map"][..., 1]
-        rough_conductor_map = results["material_map"][..., 2]
-        smooth_conductor_map = results["material_map"][..., 3]
+        scale = 10.0
+        rough_plastic_map = results["material_map"][..., 0]*scale
+        dielectric_map = results["material_map"][..., 1]*scale
+        rough_conductor_map = results["material_map"][..., 2]*scale
+        smooth_conductor_map = results["material_map"][..., 3]*scale
 
         if args.inv_gamma_gt:
             gt_color_im = np.power(gt_color_im + 1e-6, 1.0 / 2.2)
@@ -515,7 +521,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         #im = np.concatenate((row1, row2, row3, row4), axis=0)
         from models.helper import concatenate_result
         img_list = [gt_color_im, normal_im, edge_mask_im,
-                    color_im, diffuse_color_im, material_map3,
+                    color_im, diffuse_color_im, specular_color_im,
+                    material_map3, smooth_conductor_map,
                     rough_plastic_map, dielectric_map, rough_conductor_map]
         im = concatenate_result(image_list=img_list, imarray_length=3)
         imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))

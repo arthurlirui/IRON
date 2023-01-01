@@ -25,7 +25,7 @@ class CoLocRenderer(nn.Module):
         self.smooth_conductor_renderer = smooth_conductor
 
     def forward(self, light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha, material_vector):
-        res_rp = self.rough_conductor_renderer(light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha)
+        res_rp = self.rough_plastic_renderer(light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha)
         res_di = self.dielectric_renderer(light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha)
         res_rc = self.rough_conductor_renderer(light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha)
         res_sc = self.smooth_conductor_renderer(light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha)
@@ -36,9 +36,9 @@ class CoLocRenderer(nn.Module):
         diffuse_rgb += material_vector[..., 3:4] * res_sc["diffuse_rgb"]
 
         specular_rgb = material_vector[..., 0:1] * res_rp["specular_rgb"]
-        specular_rgb += material_vector[..., 1:2] * res_rp["specular_rgb"]
-        specular_rgb += material_vector[..., 2:3] * res_rp["specular_rgb"]
-        specular_rgb += material_vector[..., 3:4] * res_rp["specular_rgb"]
+        specular_rgb += material_vector[..., 1:2] * res_di["specular_rgb"]
+        specular_rgb += material_vector[..., 2:3] * res_rc["specular_rgb"]
+        specular_rgb += material_vector[..., 3:4] * res_sc["specular_rgb"]
         ret = {"diffuse_rgb": diffuse_rgb, "specular_rgb": specular_rgb, "rgb": diffuse_rgb + specular_rgb, "material_map": material_vector}
         return ret
 
@@ -387,19 +387,22 @@ class RoughConductorCoLocRenderer(nn.Module):
 
 
 def fresnel_dielectric(cosThetaI, cosThetaT, eta):
-    if eta == 1:
-        cosThetaT = -1*cosThetaI
-        return 0
-    scale = 1.0/eta if cosThetaI > 0 else eta
+    #if eta == 1:
+    #    cosThetaT = -1*cosThetaI
+    #    return 0
+    scale = torch.ones_like(cosThetaI) * eta
+    scale[cosThetaI > 0] = 1.0/eta
     cosThetaTSqr = 1 - (1-cosThetaI**2)*(scale**2)
-    if cosThetaTSqr <= 0.0:
-        cosThetaT = 0
-        return 1.0
-    cosThetaI = np.abs(cosThetaI)
-    cosThetaT = np.sqrt(cosThetaTSqr)
+    #if cosThetaTSqr <= 0.0:
+    #    cosThetaT = 0
+    #    return 1.0
+    #cosThetaI = np.abs(cosThetaI)
+    cosThetaI = torch.abs(cosThetaI)
+    #cosThetaT = np.sqrt(cosThetaTSqr)
+    cosThetaT = torch.sqrt(cosThetaTSqr)
     Rs = (cosThetaI - eta * cosThetaT) / (cosThetaI + eta * cosThetaT)
     Rp = (eta * cosThetaI - cosThetaT) / (eta * cosThetaI + cosThetaT)
-    cosThetaT = -1*cosThetaT if cosThetaI > 0 else cosThetaT
+    #cosThetaT = -1*cosThetaT if cosThetaI > 0 else cosThetaT
     return 0.5 * (Rs * Rs + Rp * Rp)
 
 
