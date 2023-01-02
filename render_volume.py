@@ -39,7 +39,7 @@ class Runner:
         #self.conf["dataset.nir_dir"] = self.conf['dataset']['nir_dir']
         self.base_exp_dir = self.conf["general.base_exp_dir"]
         os.makedirs(self.base_exp_dir, exist_ok=True)
-        self.dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
+        self.dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
 
         #self.dataset_nir = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
         #self.dataset_rgb = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')

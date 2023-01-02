@@ -92,7 +92,7 @@ color_optimizer_dict = {
     "diffuse_albedo_network": torch.optim.Adam(color_network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
     "specular_albedo_network": torch.optim.Adam(color_network_dict["specular_albedo_network"].parameters(), lr=1e-4),
     "specular_roughness_network": torch.optim.Adam(color_network_dict["specular_roughness_network"].parameters(), lr=1e-4),
-    "material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-2),
+    "material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-4),
     "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
 }
 
@@ -151,12 +151,12 @@ dielectric_renderer = SmoothDielectricRenderer(use_cuda=True)
 #thin_dielectric_renderer = ThinDielectricRenderer(use_cuda=True)
 ior_path = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/mitsuba-data/ior'
 conductor_renderer = SmoothConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
-rought_conductor_renderer = RoughConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
+rough_conductor_renderer = RoughConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
 
 full_renderer = CoLocRenderer(rough_plastic=rough_plastic_renderer,
                               dielectric=dielectric_renderer,
                               smooth_conductor=conductor_renderer,
-                              conductor=rought_conductor_renderer, use_cuda=True)
+                              conductor=rough_conductor_renderer, use_cuda=True)
 
 pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
 
@@ -391,10 +391,10 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         # constraint for material map
         material_type_loss = torch.norm(torch.sum(torch.abs(results["material_map"]), dim=-1) - 1.0, p=2)
         #material_sparse_loss = torch.norm(torch.abs(torch.max(results["material_map"], dim=-1)[0] - 1.0), p=1)
-        material_sparse_loss = torch.norm(results["material_map"], p=1)
+        material_sparse_loss = torch.norm(results["material_map"], p=0)
     eik_loss = eik_loss / eik_cnt * args.eik_weight
 
-    loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + 0.0 * material_type_loss + 0.1 * material_sparse_loss
+    loss = img_loss + eik_loss + roughrange_loss + 0.0 * sparse_loss + 0.0 * material_type_loss + 50.0 * material_sparse_loss
     #loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + material_type_loss
 
     loss.backward()
@@ -425,7 +425,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             os.path.join(args.out_dir, f"ckpt_{global_step}.pth"),
         )
 
-    if global_step % 500 == 0:
+    if global_step % 50 == 0:
         ic(
             args.out_dir,
             global_step,
@@ -486,11 +486,18 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         specular_albedo_im = results["specular_albedo"]
         specular_roughness_im = np.tile(results["specular_roughness"][:, :, np.newaxis], (1, 1, 3))
 
-        scale = 10.0
+        scale = 1.0
         rough_plastic_map = results["material_map"][..., 0]*scale
         dielectric_map = results["material_map"][..., 1]*scale
         rough_conductor_map = results["material_map"][..., 2]*scale
         smooth_conductor_map = results["material_map"][..., 3]*scale
+
+        tmap = np.stack([rough_plastic_map, dielectric_map, rough_conductor_map, smooth_conductor_map], axis=-1)
+        maxv, minv = tmap[:].max(), tmap[:].min()
+        rough_plastic_map = (rough_plastic_map-minv) / (maxv-minv)
+        dielectric_map = (dielectric_map - minv) / (maxv - minv)
+        rough_conductor_map = (rough_conductor_map - minv) / (maxv - minv)
+        smooth_conductor_map = (smooth_conductor_map - minv) / (maxv - minv)
 
         if args.inv_gamma_gt:
             gt_color_im = np.power(gt_color_im + 1e-6, 1.0 / 2.2)

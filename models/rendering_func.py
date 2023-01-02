@@ -21,7 +21,7 @@ def get_materials_exp(color_network_dict, points, normals, features, is_metal=Fa
     #if not is_metal:
     #    specular_albedo = torch.mean(specular_albedo, dim=-1, keepdim=True).expand_as(specular_albedo)
     specular_roughness = color_network_dict["specular_roughness_network"](points, normals, None, features).abs() + 0.01
-    material_vector = color_network_dict["material_network"](points, normals, None, features).abs()
+    material_vector = color_network_dict["material_network"](points, None, None, features).abs()
     return diffuse_albedo, specular_albedo, specular_roughness, material_vector
 
 
