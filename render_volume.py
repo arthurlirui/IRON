@@ -639,7 +639,7 @@ if __name__ == "__main__":
     if args.mode == "train":
         #runner.train()
         runner.train_NIRRGB(data_type='rgb')
-        #runner.train_NIRRGB(data_type='nir')
+        runner.train_NIRRGB(data_type='nir')
     elif args.mode == "validate_mesh":
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
     elif args.mode.startswith("interpolate"):  # Interpolate views given two image indices

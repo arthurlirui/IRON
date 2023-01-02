@@ -3,7 +3,7 @@ import os.path
 import numpy as np
 import json
 import copy
-import open3d as o3d
+#import open3d as o3d
 
 
 def get_tf_cams_list(cam_dict_list=[], target_radius=1.):
@@ -64,18 +64,18 @@ def normalize_cam_dict(in_cam_dict_file_list, out_cam_dict_file, target_radius=1
 
     translate, scale = get_tf_cams_list(in_cam_dict_list, target_radius=target_radius)
 
-    if in_geometry_file is not None and out_geometry_file is not None:
-        # check this page if you encounter issue in file io: http://www.open3d.org/docs/0.9.0/tutorial/Basic/file_io.html
-        geometry = o3d.io.read_triangle_mesh(in_geometry_file)
-        
-        tf_translate = np.eye(4)
-        tf_translate[:3, 3:4] = translate
-        tf_scale = np.eye(4)
-        tf_scale[:3, :3] *= scale
-        tf = np.matmul(tf_scale, tf_translate)
-
-        geometry_norm = geometry.transform(tf)
-        o3d.io.write_triangle_mesh(out_geometry_file, geometry_norm)
+    # if in_geometry_file is not None and out_geometry_file is not None:
+    #     # check this page if you encounter issue in file io: http://www.open3d.org/docs/0.9.0/tutorial/Basic/file_io.html
+    #     geometry = o3d.io.read_triangle_mesh(in_geometry_file)
+    #
+    #     tf_translate = np.eye(4)
+    #     tf_translate[:3, 3:4] = translate
+    #     tf_scale = np.eye(4)
+    #     tf_scale[:3, :3] *= scale
+    #     tf = np.matmul(tf_scale, tf_translate)
+    #
+    #     geometry_norm = geometry.transform(tf)
+    #     o3d.io.write_triangle_mesh(out_geometry_file, geometry_norm)
   
     def transform_pose(W2C, translate, scale):
         C2W = np.linalg.inv(W2C)
