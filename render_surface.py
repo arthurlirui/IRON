@@ -163,7 +163,7 @@ pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 #RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, folder_name='nir')
-image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB(args.data_dir, folder_name='nir')
+image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB(args.data_dir, args.folder_name, 'cam_dict_norm.json')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 cameras = [
     Camera(W=gt_images[i].shape[1], H=gt_images[i].shape[0], K=Ks[i].cuda(), W2C=W2Cs[i].cuda())
@@ -449,6 +449,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
                     break
                 idx += 1
 
+        #camera_resize, gt_color_resize = cameras[idx].resize(factor=0.25, image=gt_images[idx])
         camera_resize, gt_color_resize = cameras[idx].resize(factor=0.25, image=gt_images[idx])
         results = render_camera(
             camera_resize,

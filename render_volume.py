@@ -130,12 +130,7 @@ class Runner:
                                                    self.batch_size,
                                                    data_type=data_type)
 
-            rays_o, rays_d, true_rgb, mask = (
-                data[:, :3],
-                data[:, 3:6],
-                data[:, 6:9],
-                data[:, 9:10],
-            )
+            rays_o, rays_d, true_rgb, mask = (data[:, :3], data[:, 3:6], data[:, 6:9], data[:, 9:10])
             near, far = self.dataset.near_far_from_sphere(rays_o, rays_d)
 
             background_rgb = None
@@ -639,7 +634,7 @@ if __name__ == "__main__":
     if args.mode == "train":
         #runner.train()
         runner.train_NIRRGB(data_type='rgb')
-        runner.train_NIRRGB(data_type='nir')
+        #runner.train_NIRRGB(data_type='nir')
     elif args.mode == "validate_mesh":
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
     elif args.mode.startswith("interpolate"):  # Interpolate views given two image indices

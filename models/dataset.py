@@ -565,11 +565,12 @@ class DatasetNIRRGB:
         print("Load data: End")
 
     def transform_pose(self, W2C, translate, scale):
-        C2W = np.linalg.inv(W2C)
-        cam_center = C2W[:3, 3]
-        cam_center = (cam_center + translate) * scale
-        C2W[:3, 3] = cam_center
-        return np.linalg.inv(C2W)
+        return transform_pose(W2C, translate, scale)
+        # C2W = np.linalg.inv(W2C)
+        # cam_center = C2W[:3, 3]
+        # cam_center = (cam_center + translate) * scale
+        # C2W[:3, 3] = cam_center
+        # return np.linalg.inv(C2W)
 
     def load_IRON_dict(self, filename='cam_dict_norm.json'):
         camera_dict = json.load(open(os.path.join(self.data_dir, filename)))
@@ -769,10 +770,13 @@ def to8b(x):
     return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)
 
 
-def load_dataset_NIRRGB(datadir, folder_name='rgb'):
+def load_dataset_NIRRGB(datadir, folder_name='rgb', file_name='cam_dict_norm.json'):
     imglist = glob.glob(os.path.join(datadir, folder_name, '*.*'))
-    with open(os.path.join(datadir, 'cam_dict_norm.json')) as f:
+    with open(os.path.join(datadir, file_name)) as f:
         cam_dict = json.load(f)
+
+    target_radius = 1.0
+    translate, scale = get_tf_cams(cam_dict, target_radius=target_radius)
 
     # cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
     # imgnames = list(cam_dict.keys())
@@ -785,9 +789,10 @@ def load_dataset_NIRRGB(datadir, folder_name='rgb'):
     gt_images = []
     Ks = []
     W2Cs = []
-    imgtype = 'png'
+    #imgtype = 'png'
     imreader = None
     imwriter = None
+
     if len(imglist) > 0:
         x = imglist[0]
         if x.endswith('png') or x.endswith('jpg'):
@@ -836,6 +841,8 @@ def load_dataset_NIRRGB(datadir, folder_name='rgb'):
         K = np.array(cam_dict[filename]["K"]).reshape((4, 4)).astype(np.float32)
         W2C = np.array(cam_dict[filename]["W2C"]).reshape((4, 4)).astype(np.float32)
 
+        W2C = transform_pose(W2C, translate, scale)
+
         image_fpaths.append(fpath)
         gt_images.append(torch.from_numpy(im))
         Ks.append(torch.from_numpy(K))
@@ -844,6 +851,14 @@ def load_dataset_NIRRGB(datadir, folder_name='rgb'):
     Ks = torch.stack(Ks, dim=0)
     W2Cs = torch.stack(W2Cs, dim=0)
     return image_fpaths, gt_images, Ks, W2Cs
+
+
+def transform_pose(W2C, translate, scale):
+    C2W = np.linalg.inv(W2C)
+    cam_center = C2W[:3, 3]
+    cam_center = (cam_center + translate) * scale
+    C2W[:3, 3] = cam_center
+    return np.linalg.inv(C2W)
 
 
 def load_datadir(datadir, folder_name='image'):
