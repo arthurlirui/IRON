@@ -39,7 +39,11 @@ class Runner:
         #self.conf["dataset.nir_dir"] = self.conf['dataset']['nir_dir']
         self.base_exp_dir = self.conf["general.base_exp_dir"]
         os.makedirs(self.base_exp_dir, exist_ok=True)
-        self.dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
+
+        if os.path.exists(self.conf['dataset']['rgb_dir']):
+            self.dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
+        if os.path.exists(self.conf['dataset']['nir_dir']):
+            self.dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
 
         #self.dataset_nir = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
         #self.dataset_rgb = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
@@ -633,8 +637,13 @@ if __name__ == "__main__":
 
     if args.mode == "train":
         #runner.train()
-        runner.train_NIRRGB(data_type='rgb')
-        #runner.train_NIRRGB(data_type='nir')
+        conf_filename = os.path.basename(args.conf)
+        if conf_filename == 'nirrgb.conf':
+            runner.train_NIRRGB(data_type='rgb')
+            runner.train_NIRRGB(data_type='nir')
+        #runner.train_NIRRGB(data_type='rgb')
+        if os.path.basename(args.conf) == 'nir.conf':
+            runner.train_NIRRGB(data_type='nir')
     elif args.mode == "validate_mesh":
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
     elif args.mode.startswith("interpolate"):  # Interpolate views given two image indices

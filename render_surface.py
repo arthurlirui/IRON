@@ -96,6 +96,72 @@ color_optimizer_dict = {
     "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
 }
 
+use_ggx = False
+use_multi = False
+use_comp = True
+if use_ggx:
+    ggx_renderer = GGXColocatedRenderer(use_cuda=True)
+
+if use_multi:
+    rough_plastic_renderer = RoughPlasticCoLocRenderer(use_cuda=True)
+    dielectric_renderer = SmoothDielectricRenderer(use_cuda=True)
+    #thin_dielectric_renderer = ThinDielectricRenderer(use_cuda=True)
+    ior_path = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/mitsuba-data/ior'
+    conductor_renderer = SmoothConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
+    rough_conductor_renderer = RoughConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
+
+    full_renderer = CoLocRenderer(rough_plastic=rough_plastic_renderer,
+                                  dielectric=dielectric_renderer,
+                                  smooth_conductor=conductor_renderer,
+                                  conductor=rough_conductor_renderer, use_cuda=True)
+
+
+def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
+    # rendering by using composite models
+    dots_sh = list(interior_mask.shape)
+    rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
+    diffuse_rgb, specular_rgb = rgb.clone(), rgb.clone()
+    diffuse_albedo, specular_albedo = rgb.clone(), rgb.clone()
+    specular_roughness = rgb[..., 0].clone()
+    material_vector = torch.zeros(dots_sh + [4], dtype=torch.float32, device=interior_mask.device)
+    normals_pad = rgb.clone()
+
+    if interior_mask.any():
+        normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
+        outputs = get_materials_exp(color_network_dict, points, normals, features)
+        interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness, interior_material_vector = outputs
+
+        results = full_renderer(
+            color_network_dict["point_light_network"](),
+            (points - ray_o).norm(dim=-1, keepdim=True),
+            normals,
+            -ray_d,
+            interior_diffuse_albedo,
+            interior_specular_albedo,
+            interior_specular_roughness,
+            interior_material_vector
+        )
+
+        rgb[interior_mask] = results["rgb"]
+        diffuse_rgb[interior_mask] = results["diffuse_rgb"]
+        specular_rgb[interior_mask] = results["specular_rgb"]
+        material_vector[interior_mask] = results["material_map"]
+        diffuse_albedo[interior_mask] = interior_diffuse_albedo
+        specular_albedo[interior_mask] = interior_specular_albedo
+        specular_roughness[interior_mask] = interior_specular_roughness.squeeze(-1)
+        normals_pad[interior_mask] = normals
+
+    return {
+        "color": rgb,
+        "material_map": material_vector,
+        "diffuse_color": diffuse_rgb,
+        "specular_color": specular_rgb,
+        "diffuse_albedo": diffuse_albedo,
+        "specular_albedo": specular_albedo,
+        "specular_roughness": specular_roughness,
+        "normal": normals_pad,
+    }
+
 
 def render_fn_exp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
     dots_sh = list(interior_mask.shape)
@@ -145,18 +211,7 @@ def render_fn_exp(interior_mask, color_network_dict, ray_o, ray_d, points, norma
     }
 
 ###### loss specifications
-ggx_renderer = GGXColocatedRenderer(use_cuda=True)
-rough_plastic_renderer = RoughPlasticCoLocRenderer(use_cuda=True)
-dielectric_renderer = SmoothDielectricRenderer(use_cuda=True)
-#thin_dielectric_renderer = ThinDielectricRenderer(use_cuda=True)
-ior_path = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/mitsuba-data/ior'
-conductor_renderer = SmoothConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
-rough_conductor_renderer = RoughConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
 
-full_renderer = CoLocRenderer(rough_plastic=rough_plastic_renderer,
-                              dielectric=dielectric_renderer,
-                              smooth_conductor=conductor_renderer,
-                              conductor=rough_conductor_renderer, use_cuda=True)
 
 pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
 

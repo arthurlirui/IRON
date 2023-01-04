@@ -13,6 +13,25 @@ def get_materials(color_network_dict, points, normals, features, is_metal=False)
     return diffuse_albedo, specular_albedo, specular_roughness
 
 
+def get_parameter_map(network_dict, points, normals, features):
+    res = {}
+    diffuse_albedo = network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[..., [2, 1, 0]]
+    specular_albedo = network_dict["specular_albedo_network"](points, normals, None, features).abs()
+    clearcoat = network_dict["clearcoat"](points, normals, None, features).abs()
+    metallic = network_dict["metallic"]()(points, normals, None, features).abs()
+    spec_tint = network_dict["spec_tint"]()(points, normals, None, features).abs()
+    specular_roughness = network_dict["specular_roughness"]()(points, normals, None, features).abs()
+    material_vector = network_dict["material_network"](points, None, None, features).abs()
+    res['diffuse_albedo'] = diffuse_albedo
+    res['specular_albedo'] = specular_albedo
+    res['clearcoat'] = clearcoat
+    res['metallic'] = metallic
+    res['spec_tint'] = spec_tint
+    res['specular_roughness'] = specular_roughness
+    res['material_vector'] = material_vector
+    return res
+
+
 def get_materials_exp(color_network_dict, points, normals, features, is_metal=False):
     diffuse_albedo = color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[
         ..., [2, 1, 0]
