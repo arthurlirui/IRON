@@ -674,17 +674,7 @@ def render_normal_and_color(
             )
 
             if merge_render_results is None:
-                merge_render_results = dict(
-                    [
-                        (
-                            x,
-                            [
-                                render_results[x],
-                            ],
-                        )
-                        for x in render_results.keys()
-                    ]
-                )
+                merge_render_results = dict([(x, [render_results[x]]) for x in render_results.keys()])
             else:
                 for x in render_results.keys():
                     merge_render_results[x].append(render_results[x])

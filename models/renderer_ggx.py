@@ -36,7 +36,10 @@ class CoLocRenderer(nn.Module):
         self.rough_conductor_renderer = conductor
         self.smooth_conductor_renderer = smooth_conductor
 
-    def forward(self, light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha, material_vector):
+    def forward(self, light, distance, normal, viewdir, params={}):
+        diffuse_albedo, specular_albedo, alpha = params['diffuse_albedo'], params['specular_albedo'], params['specular_roughness']
+        material_vector = params['material_vector']
+
         res_rp = self.rough_plastic_renderer(light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha)
         res_di = self.dielectric_renderer(light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha)
         res_rc = self.rough_conductor_renderer(light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha)
@@ -53,6 +56,7 @@ class CoLocRenderer(nn.Module):
         specular_rgb += material_vector[..., 3:4] * res_sc["specular_rgb"]
         ret = {"diffuse_rgb": diffuse_rgb, "specular_rgb": specular_rgb, "rgb": diffuse_rgb + specular_rgb, "material_map": material_vector}
         return ret
+
 
 class GGXColocatedRenderer(nn.Module):
     def __init__(self, use_cuda=False):
@@ -543,7 +547,7 @@ class CompositeRenderer(nn.Module):
             self.MTS_TRANS = self.MTS_TRANS.cuda()
             self.MTS_DIFF_TRANS = self.MTS_DIFF_TRANS.cuda()
 
-    def main_specular_reflection(self, D, G, F_dielectric, metallic, spec_tint, cos_theta, color, intensity, bsdf, eta):
+    def main_specular_reflection(self, D, G, F_dielectric, metallic, spec_tint, cos_theta, color, intensity, eta):
         #cos_theta_i = torch.dot(normal, viewdir)
         cos_theta_i = cos_theta
         F_principled = self.principled_fresnel(F_dielectric=F_dielectric,
@@ -552,7 +556,7 @@ class CompositeRenderer(nn.Module):
                                                base_color=color,
                                                intensity=intensity,
                                                cos_theta_i=cos_theta_i,
-                                               front_side=None, bsdf=bsdf, eta=eta)
+                                               eta=eta)
         return F_principled * D * G / (4.0 * torch.abs(cos_theta_i))
 
     def secondary_isotropic_specular_reflection(self, cos_theta, clearcoat, eta):
@@ -560,7 +564,7 @@ class CompositeRenderer(nn.Module):
         #cos_theta_i = torch.dot(normal, viewdir)
         Fcc = self.calc_F_Clearcoat(cos_theta=cos_theta, eta=eta)
         Dcc = self.calc_D_Clearcoat(cos_theta=cos_theta, clearcoat=clearcoat)
-        Gcc = self.calc_G_Clearcoat(cos_theta=cos_theta, alpha=0.25)
+        Gcc = self.calc_G_Clearcoat(cos_theta=cos_theta, alpha_u=0.25, alpha_v=0.25)
         return clearcoat * 0.25 * Fcc * Dcc * Gcc * torch.abs(cos_theta)
 
     def diffuse_reflection(self, cos_theta, alpha, brdf, base_color=1.0):
@@ -578,29 +582,34 @@ class CompositeRenderer(nn.Module):
         pass
 
     def select(self, cond, a, b):
-        v = b.copy()
+        v = b.clone()
         v[cond] = a[cond]
         return v
 
     def principled_fresnel(self, F_dielectric, metallic, spec_tint,
                            base_color, intensity,
-                           cos_theta_i, bsdf=1.0, eta=1.45,
+                           cos_theta_i, eta=1.45,
                            has_metallic=True, has_spec_tint=True):
         ## https://github.com/mitsuba-renderer/mitsuba3/blob/152352f87b5baea985511b2a80d9f91c3c945a90/src/bsdfs/principledhelpers.h#L239
         lum = intensity
         outside_mask = cos_theta_i > 0.0
         #inside_mask = cos_theta_i < 0.0
+        eta = torch.ones_like(cos_theta_i) * eta
         rcp_eta = 1.0 / eta
         eta_it = self.select(outside_mask, eta, rcp_eta)
         #eta_it = eta.copy()
         #eta_it[inside_mask] = rcp_eta[inside_mask]
-        F_schlick = torch.tensor([0.0])
+        F_schlick = torch.zeros_like(base_color)
 
         if has_metallic:
-            F_schlick += metallic * self.calc_schlick(base_color, cos_theta_i, eta)
+            schlick_val = self.calc_schlick(base_color, cos_theta_i, eta)
+            F_schlick += schlick_val * metallic.expand(-1, schlick_val.shape[-1])
 
         if has_spec_tint:
-            c_tint = self.select(lum > 0, base_color / lum, 1.0)
+            c_tint = torch.ones_like(base_color)
+            masklum = lum.squeeze() > 0
+            c_tint[masklum, :] = base_color[masklum, :] / lum[masklum, :]
+            #c_tint = self.select(lum > 0, base_color / lum, 1.0)
             F0_spec_tint = c_tint * self.schlick_R0_eta(eta_it)
             F_schlick += (1 - metallic) * spec_tint * self.calc_schlick(F0_spec_tint, cos_theta_i, eta)
 
@@ -610,7 +619,8 @@ class CompositeRenderer(nn.Module):
 
     def calc_schlick(self, R0, cos_theta_i, eta):
         ### https://github.com/mitsuba-renderer/mitsuba3/blob/152352f87b5baea985511b2a80d9f91c3c945a90/src/bsdfs/principledhelpers.h#L156
-        outside_mask = cos_theta_i > 0
+        outside_mask = cos_theta_i.squeeze() > 0
+        eta = torch.ones_like(cos_theta_i)
         rcp_eta = 1.0 / eta
         eta_it = self.select(outside_mask, eta, rcp_eta)
         eta_ti = self.select(outside_mask, rcp_eta, eta)
@@ -619,7 +629,8 @@ class CompositeRenderer(nn.Module):
         cos_theta_t = torch.sqrt(cos_theta_t_sqr)
         val = self.schlick_weight(torch.abs(cos_theta_i))*(1-R0) + R0
         val_neq1 = self.schlick_weight(cos_theta_t)*(1-R0) + R0
-        return self.select(eta_it > 1.0, val, val_neq1)
+        val[eta_it.squeeze() < 1.0, :] = val_neq1[eta_it.squeeze() < 1.0, :]
+        return val
 
     def schlick_weight(self, cos_i):
         ### https://github.com/mitsuba-renderer/mitsuba3/blob/152352f87b5baea985511b2a80d9f91c3c945a90/src/bsdfs/principledhelpers.h#L141
@@ -643,7 +654,7 @@ class CompositeRenderer(nn.Module):
         Dcc = 1.0 / (np.pi * v * v * root * root + 1e-10)
         return Dcc
 
-    def calc_G_Clearcoat(self, cos_theta, alpha_u, alpha_v, viewdir=None, normal=None):
+    def calc_G_Clearcoat(self, cos_theta, alpha_u, alpha_v):
         #cos_theta_i = torch.sum(viewdir * normal, dim=-1, keepdims=True)
         Gcc = smithG1(cos_theta, alpha_u) * smithG1(cos_theta, alpha_v)
         return Gcc
@@ -669,12 +680,13 @@ class CompositeRenderer(nn.Module):
         params.keys() = ['anisotropic', 'roughness', 'metallic']
         """
         anisotropic = torch.clamp(params['anisotropic'], min=0.00001)
-        roughness = torch.clamp(params['roughness'], min=0.00001)
+        roughness = torch.clamp(params['specular_roughness'], min=0.00001)
         #flatness = torch.clamp(params['flatness'], min=0.00001)
         #spec_trans = torch.clamp(params['spec_trans'], min=0.00001)
         metallic = torch.clamp(params['metallic'], min=0.00001)
         clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
-        eta = torch.clamp(params['eta'], min=0.000001)
+        #eta = torch.clamp(params['eta'], min=0.000001)
+        eta = 1.5
         spec_tint = torch.clamp(params['spec_tint'], min=0.000001)
         specular_albedo = torch.clamp(params['specular_albedo'], min=0.00001)
         diffuse_albedo = torch.clamp(params['diffuse_albedo'], min=0.00001)
@@ -683,7 +695,8 @@ class CompositeRenderer(nn.Module):
 
         brdf = (1.0 - metallic)
         #bsdf = (1.0 - metallic) * spec_trans
-        cos_theta_i = torch.dot(viewdir, normal)
+        #cos_theta_i = torch.dot(viewdir, normal)
+        cos_theta_i = torch.sum(viewdir * normal, dim=-1, keepdims=True)
         cos_theta_o = cos_theta_i  # co-located setting
 
         #m_eta = 1.45
@@ -692,7 +705,7 @@ class CompositeRenderer(nn.Module):
         alpha_u, alpha_v = calc_dist_params(anisotropic=anisotropic, roughness=roughness, has_anisotropic=True)
         F_die = fresnel_dielectric(cosThetaI=cos_theta_i, cosThetaT=cos_theta_i, eta=eta)
 
-        D = self.calc_D_specular(cos_theta_i, cos_theta_i, eta)
+        D = self.calc_D_specular(cos_theta_i, eta)
         G = self.calc_G_specular(cos_theta_i, alpha_u, alpha_v)
 
         # decay light according to squared-distance falloff

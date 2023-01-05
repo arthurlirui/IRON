@@ -775,8 +775,10 @@ def load_dataset_NIRRGB(datadir, folder_name='rgb', file_name='cam_dict_norm.jso
     with open(os.path.join(datadir, file_name)) as f:
         cam_dict = json.load(f)
 
-    target_radius = 1.0
-    translate, scale = get_tf_cams(cam_dict, target_radius=target_radius)
+    use_trans = False
+    if use_trans:
+        target_radius = 1.0
+        translate, scale = get_tf_cams(cam_dict, target_radius=target_radius)
 
     # cam_dict = json.load(open(os.path.join(datadir, "cam_dict_norm.json")))
     # imgnames = list(cam_dict.keys())
@@ -841,7 +843,8 @@ def load_dataset_NIRRGB(datadir, folder_name='rgb', file_name='cam_dict_norm.jso
         K = np.array(cam_dict[filename]["K"]).reshape((4, 4)).astype(np.float32)
         W2C = np.array(cam_dict[filename]["W2C"]).reshape((4, 4)).astype(np.float32)
 
-        W2C = transform_pose(W2C, translate, scale)
+        if use_trans:
+            W2C = transform_pose(W2C, translate, scale)
 
         image_fpaths.append(fpath)
         gt_images.append(torch.from_numpy(im))

@@ -19,12 +19,12 @@ from models.renderer_ggx import RoughPlasticCoLocRenderer
 from models.renderer_ggx import SmoothDielectricRenderer
 from models.renderer_ggx import RoughConductorCoLocRenderer
 from models.renderer_ggx import SmoothConductorCoLocRenderer
-from models.renderer_ggx import CoLocRenderer
+from models.renderer_ggx import CoLocRenderer, CompositeRenderer
 
 from models.image_losses import PyramidL2Loss, ssim_loss_fn
 from models.export_mesh import export_mesh, export_mesh_no_translation
 from models.export_materials import export_materials
-from models.rendering_func import get_materials, get_materials_exp
+from models.rendering_func import get_materials, get_materials_exp, get_parameter_map
 
 import kornia
 from models.dataset import image_reader, image_writer, exr_writer, exr_reader
@@ -87,18 +87,36 @@ sdf_network = init_sdf_network_dict()
 color_network_dict = init_rendering_network_dict()
 
 sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
-color_optimizer_dict = {
-    "color_network": torch.optim.Adam(color_network_dict["color_network"].parameters(), lr=1e-4),
-    "diffuse_albedo_network": torch.optim.Adam(color_network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
-    "specular_albedo_network": torch.optim.Adam(color_network_dict["specular_albedo_network"].parameters(), lr=1e-4),
-    "specular_roughness_network": torch.optim.Adam(color_network_dict["specular_roughness_network"].parameters(), lr=1e-4),
-    "material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-4),
-    "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
-}
 
 use_ggx = False
 use_multi = False
 use_comp = True
+if use_multi:
+    color_optimizer_dict = {
+        "color_network": torch.optim.Adam(color_network_dict["color_network"].parameters(), lr=1e-4),
+        "diffuse_albedo_network": torch.optim.Adam(color_network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
+        "specular_albedo_network": torch.optim.Adam(color_network_dict["specular_albedo_network"].parameters(),
+                                                    lr=1e-4),
+        "specular_roughness_network": torch.optim.Adam(color_network_dict["specular_roughness_network"].parameters(),
+                                                       lr=1e-4),
+        "material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-4),
+        "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
+    }
+
+if use_comp:
+    color_optimizer_dict = {
+        "color_network": torch.optim.Adam(color_network_dict["color_network"].parameters(), lr=1e-4),
+        "diffuse_albedo_network": torch.optim.Adam(color_network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
+        "specular_albedo_network": torch.optim.Adam(color_network_dict["specular_albedo_network"].parameters(), lr=1e-4),
+        "specular_roughness_network": torch.optim.Adam(color_network_dict["specular_roughness_network"].parameters(), lr=1e-4),
+        "material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-4),
+        "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
+        "clearcoat_network": torch.optim.Adam(color_network_dict["clearcoat_network"].parameters(), lr=1e-4),
+        "metallic_network": torch.optim.Adam(color_network_dict["metallic_network"].parameters(), lr=1e-4),
+        "spec_tint_network": torch.optim.Adam(color_network_dict["spec_tint_network"].parameters(), lr=1e-4),
+        "anisotropic_ntwork": torch.optim.Adam(color_network_dict["spec_tint_network"].parameters(), lr=1e-4)
+    }
+
 if use_ggx:
     ggx_renderer = GGXColocatedRenderer(use_cuda=True)
 
@@ -114,6 +132,11 @@ if use_multi:
                                   dielectric=dielectric_renderer,
                                   smooth_conductor=conductor_renderer,
                                   conductor=rough_conductor_renderer, use_cuda=True)
+    #render_eqn = full_renderer
+
+if use_comp:
+    comp_renderer = CompositeRenderer(use_cuda=True)
+    #render_eqn = render_fn_comp
 
 
 def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
@@ -122,44 +145,62 @@ def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, norm
     rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
     diffuse_rgb, specular_rgb = rgb.clone(), rgb.clone()
     diffuse_albedo, specular_albedo = rgb.clone(), rgb.clone()
-    specular_roughness = rgb[..., 0].clone()
+    specular_roughness = rgb[..., 0:1].clone()
+    if True:
+        clearcoat = specular_roughness.clone()
+        metallic = specular_roughness.clone()
+        spec_tint = specular_roughness.clone()
+
     material_vector = torch.zeros(dots_sh + [4], dtype=torch.float32, device=interior_mask.device)
     normals_pad = rgb.clone()
 
     if interior_mask.any():
         normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
-        outputs = get_materials_exp(color_network_dict, points, normals, features)
-        interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness, interior_material_vector = outputs
-
-        results = full_renderer(
+        #outputs = get_materials_exp(color_network_dict, points, normals, features)
+        #interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness, interior_material_vector = outputs
+        params = get_parameter_map(network_dict=color_network_dict, points=points, normals=normals, features=features)
+        results = comp_renderer(
             color_network_dict["point_light_network"](),
             (points - ray_o).norm(dim=-1, keepdim=True),
             normals,
             -ray_d,
-            interior_diffuse_albedo,
-            interior_specular_albedo,
-            interior_specular_roughness,
-            interior_material_vector
+            params=params
         )
 
         rgb[interior_mask] = results["rgb"]
         diffuse_rgb[interior_mask] = results["diffuse_rgb"]
         specular_rgb[interior_mask] = results["specular_rgb"]
-        material_vector[interior_mask] = results["material_map"]
-        diffuse_albedo[interior_mask] = interior_diffuse_albedo
-        specular_albedo[interior_mask] = interior_specular_albedo
-        specular_roughness[interior_mask] = interior_specular_roughness.squeeze(-1)
+        #material_vector[interior_mask] = results["material_vector"]
+
+        diffuse_albedo[interior_mask] = params['diffuse_albedo']
+        specular_albedo[interior_mask] = params['specular_albedo']
+        specular_roughness[interior_mask] = params['specular_roughness']
         normals_pad[interior_mask] = normals
+
+        clearcoat[interior_mask] = params['clearcoat']
+        metallic[interior_mask] = params['metallic']
+        spec_tint[interior_mask] = params['spec_tint']
+
+        # res['diffuse_albedo'] = diffuse_albedo
+        # res['specular_albedo'] = specular_albedo
+        # res['clearcoat'] = clearcoat
+        # res['metallic'] = metallic
+        # res['spec_tint'] = spec_tint
+        # res['specular_roughness'] = specular_roughness
+        # res['material_vector'] = material_vector
 
     return {
         "color": rgb,
-        "material_map": material_vector,
+        #"material_vector": material_vector,
         "diffuse_color": diffuse_rgb,
         "specular_color": specular_rgb,
         "diffuse_albedo": diffuse_albedo,
         "specular_albedo": specular_albedo,
         "specular_roughness": specular_roughness,
         "normal": normals_pad,
+        "clearcoat": clearcoat,
+        "metallic": metallic,
+        "spec_tint": spec_tint
     }
 
 
@@ -176,32 +217,33 @@ def render_fn_exp(interior_mask, color_network_dict, ray_o, ray_d, points, norma
 
     if interior_mask.any():
         normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
-        outputs = get_materials_exp(color_network_dict, points, normals, features)
-        interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness, interior_material_vector = outputs
+        params = get_materials_exp(color_network_dict, points, normals, features)
+        #interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness, interior_material_vector = outputs
 
         results = full_renderer(
             color_network_dict["point_light_network"](),
             (points - ray_o).norm(dim=-1, keepdim=True),
             normals,
             -ray_d,
-            interior_diffuse_albedo,
-            interior_specular_albedo,
-            interior_specular_roughness,
-            interior_material_vector
+            params=params
+            # interior_diffuse_albedo,
+            # interior_specular_albedo,
+            # interior_specular_roughness,
+            # interior_material_vector
         )
 
         rgb[interior_mask] = results["rgb"]
         diffuse_rgb[interior_mask] = results["diffuse_rgb"]
         specular_rgb[interior_mask] = results["specular_rgb"]
         material_vector[interior_mask] = results["material_map"]
-        diffuse_albedo[interior_mask] = interior_diffuse_albedo
-        specular_albedo[interior_mask] = interior_specular_albedo
-        specular_roughness[interior_mask] = interior_specular_roughness.squeeze(-1)
+        diffuse_albedo[interior_mask] = params["diffuse_albedo"]
+        specular_albedo[interior_mask] = params["specular_albedo"]
+        specular_roughness[interior_mask] = params['specular_roughness'].squeeze(-1)
         normals_pad[interior_mask] = normals
 
     return {
         "color": rgb,
-        "material_map": material_vector,
+        "material_vector": material_vector,
         "diffuse_color": diffuse_rgb,
         "specular_color": specular_rgb,
         "diffuse_albedo": diffuse_albedo,
@@ -209,6 +251,13 @@ def render_fn_exp(interior_mask, color_network_dict, ray_o, ray_d, points, norma
         "specular_roughness": specular_roughness,
         "normal": normals_pad,
     }
+
+
+if use_multi:
+    render_eqn = render_fn_exp
+
+if use_comp:
+    render_eqn = render_fn_comp
 
 ###### loss specifications
 
@@ -328,7 +377,7 @@ if args.render_all:
             sdf_network,
             raytracer,
             color_network_dict,
-            render_fn_exp,
+            render_eqn,
             fill_holes=True,
             handle_edges=True,
             is_training=False,
@@ -345,15 +394,14 @@ if args.render_all:
         timgname = os.path.basename(impath).split('.')[0]
         imageio.imwrite(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
 
-        if True:
-            normal = results["normal"]
-            normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
-            normal_im = (normal + 1.0) / 2.0
-            imageio.imwrite(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
-            diff_im = results["diffuse_color"]
-            imageio.imwrite(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
-            specular_im = results["specular_color"]
-            imageio.imwrite(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
+        normal = results["normal"]
+        normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
+        normal_im = (normal + 1.0) / 2.0
+        imageio.imwrite(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
+        diff_im = results["diffuse_color"]
+        imageio.imwrite(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
+        specular_im = results["specular_color"]
+        imageio.imwrite(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
     exit(0)
 
 ###### training
@@ -382,7 +430,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         sdf_network,
         raytracer,
         color_network_dict,
-        render_fn_exp,
+        render_eqn,
         fill_holes=fill_holes,
         handle_edges=handle_edges,
         is_training=is_training,
@@ -444,12 +492,16 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             roughrange_loss = (roughness - 0.5).mean() * args.roughrange_weight
 
         # constraint for material map
-        material_type_loss = torch.norm(torch.sum(torch.abs(results["material_map"]), dim=-1) - 1.0, p=2)
-        #material_sparse_loss = torch.norm(torch.abs(torch.max(results["material_map"], dim=-1)[0] - 1.0), p=1)
-        material_sparse_loss = torch.norm(results["material_map"], p=0)
+        if use_multi:
+            material_type_loss = torch.norm(torch.sum(torch.abs(results["material_vector"]), dim=-1) - 1.0, p=2)
+            #material_sparse_loss = torch.norm(torch.abs(torch.max(results["material_map"], dim=-1)[0] - 1.0), p=1)
+            material_sparse_loss = torch.norm(results["material_vector"], p=0)
     eik_loss = eik_loss / eik_cnt * args.eik_weight
 
-    loss = img_loss + eik_loss + roughrange_loss + 0.0 * sparse_loss + 0.0 * material_type_loss + 50.0 * material_sparse_loss
+    if use_multi:
+        loss = img_loss + eik_loss + roughrange_loss + 0.0 * sparse_loss + 0.0 * material_type_loss + 50.0 * material_sparse_loss
+    if use_comp:
+        loss = img_loss + eik_loss + roughrange_loss
     #loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + material_type_loss
 
     loss.backward()
@@ -472,10 +524,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     if global_step % 1000 == 0:
         torch.save(
             dict(
-                [
-                    ("sdf_network", sdf_network.state_dict()),
-                ]
-                + [(x, color_network_dict[x].state_dict()) for x in color_network_dict.keys()]
+                [("sdf_network", sdf_network.state_dict())] + [(x, color_network_dict[x].state_dict()) for x in color_network_dict.keys()]
             ),
             os.path.join(args.out_dir, f"ckpt_{global_step}.pth"),
         )
@@ -497,7 +546,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         for x in list(results.keys()):
             del results[x]
 
-        idx = 0
+        idx = np.random.randint(0, len(cameras), 1)[0]
         if args.plot_image_name is not None:
             while idx < len(image_fpaths):
                 if args.plot_image_name in image_fpaths[idx]:
@@ -511,7 +560,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             sdf_network,
             raytracer,
             color_network_dict,
-            render_fn_exp,
+            render_eqn,
             fill_holes=fill_holes,
             handle_edges=handle_edges,
             is_training=False,
@@ -521,7 +570,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
             results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
 
-            results["material_map"] = torch.clamp(results["material_map"], min=0.0, max=10.0)
+            if use_multi:
+                results["material_vector"] = torch.clamp(results["material_vector"], min=0.0, max=10.0)
 
             w = (results['distance'] / (torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1))
             f = results["color"] * torch.stack([w, w, w], dim=-1)
@@ -542,18 +592,19 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         specular_albedo_im = results["specular_albedo"]
         specular_roughness_im = np.tile(results["specular_roughness"][:, :, np.newaxis], (1, 1, 3))
 
-        scale = 1.0
-        rough_plastic_map = results["material_map"][..., 0]*scale
-        dielectric_map = results["material_map"][..., 1]*scale
-        rough_conductor_map = results["material_map"][..., 2]*scale
-        smooth_conductor_map = results["material_map"][..., 3]*scale
+        if use_multi:
+            scale = 1.0
+            rough_plastic_map = results["material_vector"][..., 0]*scale
+            dielectric_map = results["material_vector"][..., 1]*scale
+            rough_conductor_map = results["material_vector"][..., 2]*scale
+            smooth_conductor_map = results["material_vector"][..., 3]*scale
 
-        tmap = np.stack([rough_plastic_map, dielectric_map, rough_conductor_map, smooth_conductor_map], axis=-1)
-        maxv, minv = tmap[:].max(), tmap[:].min()
-        rough_plastic_map = (rough_plastic_map-minv) / (maxv-minv)
-        dielectric_map = (dielectric_map - minv) / (maxv - minv)
-        rough_conductor_map = (rough_conductor_map - minv) / (maxv - minv)
-        smooth_conductor_map = (smooth_conductor_map - minv) / (maxv - minv)
+            tmap = np.stack([rough_plastic_map, dielectric_map, rough_conductor_map, smooth_conductor_map], axis=-1)
+            maxv, minv = tmap[:].max(), tmap[:].min()
+            rough_plastic_map = (rough_plastic_map-minv) / (maxv-minv + 1e-4)
+            dielectric_map = (dielectric_map - minv) / (maxv - minv + 1e-4)
+            rough_conductor_map = (rough_conductor_map - minv) / (maxv - minv + 1e-4)
+            smooth_conductor_map = (smooth_conductor_map - minv) / (maxv - minv + 1e-4)
 
         if args.inv_gamma_gt:
             gt_color_im = np.power(gt_color_im + 1e-6, 1.0 / 2.2)
@@ -562,12 +613,14 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             specular_color_im = color_im - diffuse_color_im
             nir_sparse = np.power(nir_sparse + 1e-6, 1.0 / 2.2)
 
-            rough_plastic_map = np.power(rough_plastic_map + 1e-6, 1.0/2.2)
-            dielectric_map = np.power(dielectric_map + 1e-6, 1.0/2.2)
-            rough_conductor_map = np.power(rough_conductor_map + 1e-6, 1.0/2.2)
-            smooth_conductor_map = np.power(smooth_conductor_map + 1e-6, 1.0/2.2)
+            if use_multi:
+                rough_plastic_map = np.power(rough_plastic_map + 1e-6, 1.0/2.2)
+                dielectric_map = np.power(dielectric_map + 1e-6, 1.0/2.2)
+                rough_conductor_map = np.power(rough_conductor_map + 1e-6, 1.0/2.2)
+                smooth_conductor_map = np.power(smooth_conductor_map + 1e-6, 1.0/2.2)
 
-        material_map3 = np.stack([rough_plastic_map, dielectric_map, rough_conductor_map], axis=-1)
+        if use_multi:
+            material_map3 = np.stack([rough_plastic_map, dielectric_map, rough_conductor_map], axis=-1)
 
         gt_color_im = gt_color_im[..., :3]
         normal_im = normal_im[..., :3]
@@ -583,10 +636,14 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
 
         #im = np.concatenate((row1, row2, row3, row4), axis=0)
         from models.helper import concatenate_result
-        img_list = [gt_color_im, normal_im, edge_mask_im,
-                    color_im, diffuse_color_im, specular_color_im,
-                    material_map3, smooth_conductor_map,
-                    rough_plastic_map, dielectric_map, rough_conductor_map]
+        if use_multi:
+            img_list = [gt_color_im, normal_im, edge_mask_im,
+                        color_im, diffuse_color_im, specular_color_im,
+                        material_map3, smooth_conductor_map,
+                        rough_plastic_map, dielectric_map, rough_conductor_map]
+        if use_comp:
+            img_list = [gt_color_im, normal_im, edge_mask_im,
+                        color_im, diffuse_color_im, specular_color_im]
         im = concatenate_result(image_list=img_list, imarray_length=3)
         imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))
 
