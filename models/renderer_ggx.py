@@ -549,15 +549,15 @@ class CompositeRenderer(nn.Module):
 
     def main_specular_reflection(self, D, G, F_dielectric, metallic, spec_tint, cos_theta, color, intensity, eta):
         #cos_theta_i = torch.dot(normal, viewdir)
-        cos_theta_i = cos_theta
-        F_principled = self.principled_fresnel(F_dielectric=F_dielectric,
+        #cos_theta_i = cos_theta
+        F_principled = self.principled_fresnel(F_dielectric=F_dielectric*color,
                                                metallic=metallic,
                                                spec_tint=spec_tint,
                                                base_color=color,
                                                intensity=intensity,
-                                               cos_theta_i=cos_theta_i,
+                                               cos_theta=cos_theta,
                                                eta=eta)
-        return F_principled * D * G / (4.0 * torch.abs(cos_theta_i))
+        return F_principled * D * G / (4.0 * torch.abs(cos_theta))
 
     def secondary_isotropic_specular_reflection(self, cos_theta, clearcoat, eta):
         ## https://github.com/mitsuba-renderer/mitsuba3/blob/16b133ecb940346ce17959589e0ce567eb7181e5/src/bsdfs/principled.cpp#L623
@@ -567,7 +567,7 @@ class CompositeRenderer(nn.Module):
         Gcc = self.calc_G_Clearcoat(cos_theta=cos_theta, alpha_u=0.25, alpha_v=0.25)
         return clearcoat * 0.25 * Fcc * Dcc * Gcc * torch.abs(cos_theta)
 
-    def diffuse_reflection(self, cos_theta, alpha, brdf, base_color=1.0):
+    def diffuse_reflection(self, cos_theta, alpha, brdf, base_color):
         ## https://github.com/mitsuba-renderer/mitsuba3/blob/16b133ecb940346ce17959589e0ce567eb7181e5/src/bsdfs/principled.cpp#L645
         F = self.schlick_weight(torch.abs(cos_theta))
         f_diff = (1.0 - 0.5 * F) * (1.0 - 0.5 * F)
@@ -588,13 +588,13 @@ class CompositeRenderer(nn.Module):
 
     def principled_fresnel(self, F_dielectric, metallic, spec_tint,
                            base_color, intensity,
-                           cos_theta_i, eta=1.45,
+                           cos_theta, eta,
                            has_metallic=True, has_spec_tint=True):
         ## https://github.com/mitsuba-renderer/mitsuba3/blob/152352f87b5baea985511b2a80d9f91c3c945a90/src/bsdfs/principledhelpers.h#L239
-        lum = intensity
-        outside_mask = cos_theta_i > 0.0
+        lum = intensity * torch.ones_like(cos_theta)
+        outside_mask = cos_theta > 0.0
         #inside_mask = cos_theta_i < 0.0
-        eta = torch.ones_like(cos_theta_i) * eta
+        eta = torch.ones_like(cos_theta) * eta
         rcp_eta = 1.0 / eta
         eta_it = self.select(outside_mask, eta, rcp_eta)
         #eta_it = eta.copy()
@@ -602,7 +602,7 @@ class CompositeRenderer(nn.Module):
         F_schlick = torch.zeros_like(base_color)
 
         if has_metallic:
-            schlick_val = self.calc_schlick(base_color, cos_theta_i, eta)
+            schlick_val = self.calc_schlick(base_color, cos_theta, eta)
             F_schlick += schlick_val * metallic.expand(-1, schlick_val.shape[-1])
 
         if has_spec_tint:
@@ -611,30 +611,32 @@ class CompositeRenderer(nn.Module):
             c_tint[masklum, :] = base_color[masklum, :] / lum[masklum, :]
             #c_tint = self.select(lum > 0, base_color / lum, 1.0)
             F0_spec_tint = c_tint * self.schlick_R0_eta(eta_it)
-            F_schlick += (1 - metallic) * spec_tint * self.calc_schlick(F0_spec_tint, cos_theta_i, eta)
+            F_schlick += (1.0 - metallic) * spec_tint * self.calc_schlick(F0_spec_tint, cos_theta, eta)
 
         F_front = (1.0 - metallic) * (1.0 - spec_tint) * F_dielectric + F_schlick
         #return self.select(front_side, F_front, bsdf * F_dielectric)
         return F_front
 
-    def calc_schlick(self, R0, cos_theta_i, eta):
+    def calc_schlick(self, R0, cos_theta, eta):
         ### https://github.com/mitsuba-renderer/mitsuba3/blob/152352f87b5baea985511b2a80d9f91c3c945a90/src/bsdfs/principledhelpers.h#L156
-        outside_mask = cos_theta_i.squeeze() > 0
-        eta = torch.ones_like(cos_theta_i)
+        outside_mask = cos_theta.squeeze() > 0
+        eta = torch.ones_like(cos_theta) * eta
+        eta = torch.clamp(eta, min=1e-4, max=0.99999)
         rcp_eta = 1.0 / eta
+        rcp_eta = torch.clamp(rcp_eta, min=1e-4, max=0.99999)
         eta_it = self.select(outside_mask, eta, rcp_eta)
         eta_ti = self.select(outside_mask, rcp_eta, eta)
 
-        cos_theta_t_sqr = (cos_theta_i*cos_theta_i+1)*eta_ti+1.0
+        cos_theta_t_sqr = 1.0-(1.0 - cos_theta*cos_theta)*eta_ti*eta_ti
         cos_theta_t = torch.sqrt(cos_theta_t_sqr)
-        val = self.schlick_weight(torch.abs(cos_theta_i))*(1-R0) + R0
-        val_neq1 = self.schlick_weight(cos_theta_t)*(1-R0) + R0
+        val = self.schlick_weight(torch.abs(cos_theta)) * (1-R0) + R0
+        val_neq1 = self.schlick_weight(cos_theta_t) * (1-R0) + R0
         val[eta_it.squeeze() < 1.0, :] = val_neq1[eta_it.squeeze() < 1.0, :]
         return val
 
-    def schlick_weight(self, cos_i):
+    def schlick_weight(self, cos_theta):
         ### https://github.com/mitsuba-renderer/mitsuba3/blob/152352f87b5baea985511b2a80d9f91c3c945a90/src/bsdfs/principledhelpers.h#L141
-        m = torch.clamp(1.0-cos_i, 0.0, 1.0)
+        m = torch.clamp(1.0-cos_theta, 0.0, 1.0)
         return m**5
 
     def schlick_R0_eta(self, v):
@@ -711,20 +713,26 @@ class CompositeRenderer(nn.Module):
         # decay light according to squared-distance falloff
         light_intensity = light / (distance * distance + 1e-10)
 
-        main_specular_rgb = self.main_specular_reflection(D=D,
-                                                          G=G,
-                                                          F_dielectric=F_die,
-                                                          metallic=metallic,
-                                                          spec_tint=spec_tint,
-                                                          cos_theta=cos_theta_i,
-                                                          color=specular_albedo,
-                                                          intensity=light_intensity,
-                                                          eta=eta)
+        if True:
+            main_specular_rgb = self.main_specular_reflection(D=D,
+                                                              G=G,
+                                                              F_dielectric=F_die,
+                                                              metallic=metallic,
+                                                              spec_tint=spec_tint,
+                                                              cos_theta=cos_theta_i,
+                                                              color=specular_albedo,
+                                                              intensity=light_intensity,
+                                                              eta=eta)
+        else:
+            main_specular_rgb = torch.zeros_like(specular_albedo)
 
-        clearcoat_specular_rgb = self.secondary_isotropic_specular_reflection(cos_theta_i, clearcoat, eta)
+        if True:
+            clearcoat_specular_rgb = self.secondary_isotropic_specular_reflection(cos_theta_i, clearcoat, eta)
+        else:
+            clearcoat_specular_rgb = torch.zeros_like(specular_albedo)
 
         diffuse_rgb = self.diffuse_reflection(cos_theta=cos_theta_i,
-                                              alpha=roughness,
+                                              alpha=1.0-roughness,
                                               brdf=brdf,
                                               base_color=diffuse_albedo)
 

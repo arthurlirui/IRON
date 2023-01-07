@@ -95,10 +95,8 @@ if use_multi:
     color_optimizer_dict = {
         "color_network": torch.optim.Adam(color_network_dict["color_network"].parameters(), lr=1e-4),
         "diffuse_albedo_network": torch.optim.Adam(color_network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
-        "specular_albedo_network": torch.optim.Adam(color_network_dict["specular_albedo_network"].parameters(),
-                                                    lr=1e-4),
-        "specular_roughness_network": torch.optim.Adam(color_network_dict["specular_roughness_network"].parameters(),
-                                                       lr=1e-4),
+        "specular_albedo_network": torch.optim.Adam(color_network_dict["specular_albedo_network"].parameters(), lr=1e-4),
+        "specular_roughness_network": torch.optim.Adam(color_network_dict["specular_roughness_network"].parameters(), lr=1e-4),
         "material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-4),
         "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
     }
@@ -529,7 +527,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             os.path.join(args.out_dir, f"ckpt_{global_step}.pth"),
         )
 
-    if global_step % 50 == 0:
+    if global_step % 10 == 0:
         ic(
             args.out_dir,
             global_step,
@@ -587,10 +585,14 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         normal = results["normal"]
         normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
         normal_im = (normal + 1.0) / 2.0
-        edge_mask_im = np.tile(results["edge_mask"][:, :, np.newaxis], (1, 1, 3))
+        if 'edge_mask' in results:
+            edge_mask_im = np.tile(results["edge_mask"][:, :, np.newaxis], (1, 1, 3))
+        else:
+            edge_mask_im = np.zeros_like(results["diffuse_albedo"])
         diffuse_albedo_im = results["diffuse_albedo"]
         specular_albedo_im = results["specular_albedo"]
         specular_roughness_im = np.tile(results["specular_roughness"][:, :, np.newaxis], (1, 1, 3))
+        depth = np.tile(results["depth"][:, :, np.newaxis], (1, 1, 3))
 
         if use_multi:
             scale = 1.0
@@ -606,6 +608,11 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             rough_conductor_map = (rough_conductor_map - minv) / (maxv - minv + 1e-4)
             smooth_conductor_map = (smooth_conductor_map - minv) / (maxv - minv + 1e-4)
 
+        if use_comp:
+            clearcoat_map = results['clearcoat']
+            metallic_map = results['metallic']
+            spec_tint_map = results['spec_tint']
+
         if args.inv_gamma_gt:
             gt_color_im = np.power(gt_color_im + 1e-6, 1.0 / 2.2)
             color_im = np.power(color_im + 1e-6, 1.0 / 2.2)
@@ -619,11 +626,28 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
                 rough_conductor_map = np.power(rough_conductor_map + 1e-6, 1.0/2.2)
                 smooth_conductor_map = np.power(smooth_conductor_map + 1e-6, 1.0/2.2)
 
+            if use_comp:
+                clearcoat_map = np.power(clearcoat_map + 1e-6, 1.0 / 2.2)
+                maxv, minv = np.max(clearcoat_map[:]), np.min(clearcoat_map[:])
+                clearcoat_map = (clearcoat_map - minv) / (maxv - minv)
+
+                metallic_map = np.power(metallic_map + 1e-6, 1.0 / 2.2)
+                maxv, minv = np.max(metallic_map[:]), np.min(metallic_map[:])
+                metallic_map = (metallic_map - minv) / (maxv - minv)
+
+                spec_tint_map = np.power(spec_tint_map + 1e-6, 1.0 / 2.2)
+                maxv, minv = np.max(spec_tint_map[:]), np.min(spec_tint_map[:])
+                metallic_map = (spec_tint_map - minv) / (maxv - minv)
+
+                depth = np.power(depth + 1e-6, 1.0 / 2.2)
+                depth = (depth - np.min(depth[:])) / (np.max(depth[:]) - np.min(depth[:]))
+
         if use_multi:
             material_map3 = np.stack([rough_plastic_map, dielectric_map, rough_conductor_map], axis=-1)
 
         gt_color_im = gt_color_im[..., :3]
         normal_im = normal_im[..., :3]
+
         #row1 = np.concatenate([gt_color_im, normal_im, edge_mask_im], axis=1)
         #row2 = np.concatenate([color_im, diffuse_color_im, specular_color_im], axis=1)
 
@@ -643,7 +667,9 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
                         rough_plastic_map, dielectric_map, rough_conductor_map]
         if use_comp:
             img_list = [gt_color_im, normal_im, edge_mask_im,
-                        color_im, diffuse_color_im, specular_color_im]
+                        color_im, diffuse_color_im, specular_color_im,
+                        specular_roughness_im,
+                        clearcoat_map, metallic_map, spec_tint_map, depth]
         im = concatenate_result(image_list=img_list, imarray_length=3)
         imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))
 

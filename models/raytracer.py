@@ -373,20 +373,8 @@ def raytrace_pixels(sdf_network, raytracer, uv, camera, mask=None, max_num_rays=
     for ray_o_split, ray_d_split, ray_d_norm_split, mask_split in zip(
         torch.split(ray_o.view(-1, 3), max_num_rays, dim=0),
         torch.split(ray_d.view(-1, 3), max_num_rays, dim=0),
-        torch.split(
-            ray_d_norm.view(
-                -1,
-            ),
-            max_num_rays,
-            dim=0,
-        ),
-        torch.split(
-            mask.view(
-                -1,
-            ),
-            max_num_rays,
-            dim=0,
-        ),
+        torch.split(ray_d_norm.view(-1), max_num_rays, dim=0),
+        torch.split(mask.view(-1), max_num_rays, dim=0),
     ):
         mask_intersect_split, min_dis_split, max_dis_split = intersect_sphere(ray_o_split, ray_d_split, r=1.0)
         results = raytracer(
@@ -400,42 +388,19 @@ def raytrace_pixels(sdf_network, raytracer, uv, camera, mask=None, max_num_rays=
         results["depth"] = results["distance"] / ray_d_norm_split
 
         if merge_results is None:
-            merge_results = dict(
-                [
-                    (
-                        x,
-                        [
-                            results[x],
-                        ],
-                    )
-                    for x in results.keys()
-                    if isinstance(results[x], torch.Tensor)
-                ]
-            )
+            merge_results = dict([(x, [results[x]]) for x in results.keys() if isinstance(results[x], torch.Tensor)])
         else:
             for x in results.keys():
                 merge_results[x].append(results[x])  # gpu
 
     for x in list(merge_results.keys()):
-        results = torch.cat(merge_results[x], dim=0).reshape(
-            dots_sh
-            + [
-                -1,
-            ]
-        )
+        results = torch.cat(merge_results[x], dim=0).reshape(dots_sh + [-1])
         if results.shape[-1] == 1:
             results = results[..., 0]
         merge_results[x] = results  # gpu
 
     # append more results
-    merge_results.update(
-        {
-            "uv": uv,
-            "ray_o": ray_o,
-            "ray_d": ray_d,
-            "ray_d_norm": ray_d_norm,
-        }
-    )
+    merge_results.update({"uv": uv, "ray_o": ray_o, "ray_d": ray_d, "ray_d_norm": ray_d_norm})
     return merge_results
 
 
