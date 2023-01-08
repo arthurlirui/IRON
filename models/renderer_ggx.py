@@ -770,62 +770,6 @@ class CompositeRenderer(nn.Module):
                                               brdf=brdf,
                                               base_color=diffuse_albedo)
 
-
-
-        #specular_rgb = light_intensity * specular_albedo * F * D * G / (4.0 * dot + 1e-10)
-
-
-        # <wo, n> = <w_i, n> = <h, n> in colocated setting
-        # dot = torch.sum(viewdir * normal, dim=-1, keepdims=True)
-        # dot = torch.clamp(dot, min=0.00001, max=0.99999)  # must be very precise; cannot be 0.999
-        #
-        # # default value of IOR['polypropylene'] / IOR['air'].
-        # m_eta = 1.48958738
-        # m_invEta2 = 1.0 / (m_eta * m_eta)
-        #
-        # # clamp alpha for numeric stability
-        # #alpha = torch.clamp(alpha, min=0.0001)
-        #
-        # # specular term: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/roughplastic.cpp#L347
-        # ## compute GGX NDF: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/microfacet.h#L191
-        # cosTheta2 = dot * dot
-        # root = cosTheta2 + (1.0 - cosTheta2) / (alpha_u * alpha_v + 1e-10)
-        # D = 1.0 / (np.pi * alpha_u * alpha_v * root * root + 1e-10)
-        # ## compute fresnel: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/libcore/util.cpp#L651
-        # # F = 0.04
-        # #F = 0.03867
-        # F = fresnel_dielectric(cosThetaI=dot, cosThetaT=dot, eta=m_eta)
-        #
-        # ## compute shadowing term: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/microfacet.h#L520
-        # G = smithG1(dot, alpha) ** 2  # [..., 1]
-        #
-        # specular_rgb = light_intensity * specular_albedo * F * D * G / (4.0 * dot + 1e-10)
-        #
-        # # diffuse term: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/roughplastic.cpp#L367
-        # ## compute T12: : https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/rtrans.h#L183
-        # ### data_file: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/rtrans.h#L93
-        # ### assume eta is fixed
-        # warpedCosTheta = dot**0.25
-        # alphaMin, alphaMax = 0, 4
-        # warpedAlpha = ((alpha - alphaMin) / (alphaMax - alphaMin)) ** 0.25  # [..., 1]
-        # tx = torch.floor(warpedCosTheta * self.num_theta_samples).long()
-        # ty = torch.floor(warpedAlpha * self.num_alpha_samples).long()
-        # t_idx = ty * self.num_theta_samples + tx
-        #
-        # dots_sh = list(t_idx.shape[:-1])
-        # data = self.MTS_TRANS.view([1] * len(dots_sh) + [-1]).expand(dots_sh + [-1])
-        #
-        # t_idx = torch.clamp(t_idx, min=0, max=data.shape[-1] - 1).long()  # important
-        # T12 = torch.clamp(torch.gather(input=data, index=t_idx, dim=-1), min=0.0, max=1.0)
-        # T21 = T12  # colocated setting
-        #
-        # ## compute Fdr: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/rtrans.h#L249
-        # t_idx = torch.floor(warpedAlpha * self.num_alpha_samples).long()
-        # data = self.MTS_DIFF_TRANS.view([1] * len(dots_sh) + [-1]).expand(dots_sh + [-1])
-        # t_idx = torch.clamp(t_idx, min=0, max=data.shape[-1] - 1).long()  # important
-        # Fdr = torch.clamp(1.0 - torch.gather(input=data, index=t_idx, dim=-1), min=0.0, max=1.0)  # [..., 1]
-        #
-        # diffuse_rgb = light_intensity * (diffuse_albedo / (1.0 - Fdr + 1e-10) / np.pi) * dot * T12 * T21 * m_invEta2
         ret = {"diffuse_rgb": diffuse_rgb,
                "specular_rgb": main_specular_rgb,
                "clearcoat_specular": clearcoat_specular_rgb,
