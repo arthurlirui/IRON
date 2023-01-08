@@ -402,10 +402,6 @@ class RoughConductorCoLocRenderer(nn.Module):
         return ret
 
 
-def principled_fresnel():
-    pass
-
-
 def fresnel_dielectric(cosThetaI, cosThetaT, eta):
     #if eta == 1:
     #    cosThetaT = -1*cosThetaI
@@ -543,9 +539,46 @@ class CompositeRenderer(nn.Module):
         self.num_theta_samples = 100
         self.num_alpha_samples = 50
 
+        eta_list = glob.glob('./resource/ior/*.eta.spd')
+        k_list = glob.glob('./resource/ior/*.k.spd')
+        self.wavelength = 850
+        self.MATERIAL_ETA, self.MATERIAL_K = {}, {}
+        for i, etapath in enumerate(eta_list):
+            eta_name = os.path.basename(etapath).split('.')[0]
+            self.MATERIAL_ETA[eta_name] = torch.from_numpy(np.loadtxt(etapath))
+        for i, kpath in enumerate(k_list):
+            k_name = os.path.basename(kpath).split('.')[0]
+            self.MATERIAL_K[k_name] = torch.from_numpy(np.loadtxt(kpath))
+
+        print(self.MATERIAL_ETA)
+        print(self.MATERIAL_K)
+        print(self.get_eta(), self.get_K())
+
         if use_cuda:
             self.MTS_TRANS = self.MTS_TRANS.cuda()
             self.MTS_DIFF_TRANS = self.MTS_DIFF_TRANS.cuda()
+            for k in self.MATERIAL_ETA:
+                self.MATERIAL_ETA[k] = self.MATERIAL_ETA[k].cuda()
+            for k in self.MATERIAL_K:
+                self.MATERIAL_K[k] = self.MATERIAL_K[k].cuda()
+
+            #self.MATERIAL_ETA = self.MATERIAL_ETA.cuda()
+            #self.MATERIAL_K = self.MATERIAL_K.cuda()
+
+    def get_eta(self, wavelength=850):
+        eta = {}
+        for k in self.MATERIAL_ETA:
+            index = torch.min(torch.abs(self.MATERIAL_ETA[k][:, 0] - wavelength), dim=0)[1]
+            eta[k] = self.MATERIAL_ETA[k][index, :]
+        return eta
+
+    def get_K(self, wavelength=850):
+        K = {}
+        for k in self.MATERIAL_K:
+            index = torch.min(torch.abs(self.MATERIAL_ETA[k][:, 0] - wavelength), dim=0)[1]
+            K[k] = self.MATERIAL_K[k][index, :]
+        return K
+
 
     def main_specular_reflection(self, D, G, F_dielectric, metallic, spec_tint, cos_theta, color, intensity, eta):
         #cos_theta_i = torch.dot(normal, viewdir)
@@ -602,8 +635,9 @@ class CompositeRenderer(nn.Module):
         F_schlick = torch.zeros_like(base_color)
 
         if has_metallic:
-            schlick_val = self.calc_schlick(base_color, cos_theta, eta)
-            F_schlick += schlick_val * metallic.expand(-1, schlick_val.shape[-1])
+            if True:
+                schlick_val = self.calc_schlick(base_color, cos_theta, eta)
+                F_schlick += schlick_val * metallic.expand(-1, schlick_val.shape[-1])
 
         if has_spec_tint:
             c_tint = torch.ones_like(base_color)
@@ -726,7 +760,7 @@ class CompositeRenderer(nn.Module):
         else:
             main_specular_rgb = torch.zeros_like(specular_albedo)
 
-        if True:
+        if False:
             clearcoat_specular_rgb = self.secondary_isotropic_specular_reflection(cos_theta_i, clearcoat, eta)
         else:
             clearcoat_specular_rgb = torch.zeros_like(specular_albedo)
