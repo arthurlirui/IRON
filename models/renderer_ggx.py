@@ -579,6 +579,66 @@ class CompositeRenderer(nn.Module):
             K[k] = self.MATERIAL_K[k][index, :]
         return K
 
+    @staticmethod
+    def fnmadd(a, b, c):
+        return c - a*b
+
+    @staticmethod
+    def fmadd(a, b, c):
+        return c + a*b
+
+    @staticmethod
+    def fresnel_dielectric(cos_theta, cosThetaT, eta):
+        # if eta == 1:
+        #    cosThetaT = -1*cosThetaI
+        #    return 0
+        eta_it = torch.ones_like(cos_theta) * eta
+        eta_it[cos_theta < 0] = 1.0 / eta
+        eta_ti = torch.ones_like(cos_theta) * eta
+        eta_ti[cos_theta > 0] = 1.0 / eta
+
+        cosThetaTSqr = 1.0 - (1.0 - cos_theta ** 2) * (eta_ti ** 2)
+        cos_theta_i_abs = torch.abs(cos_theta)
+        cos_theta_t_abs = torch.sqrt(cosThetaTSqr)
+        Rs = CompositeRenderer.fnmadd(eta_it, cos_theta_t_abs, cos_theta_i_abs) / CompositeRenderer.fmadd(eta_it, cos_theta_t_abs, cos_theta_i_abs)
+        Rp = CompositeRenderer.fnmadd(eta_it, cos_theta_i_abs, cos_theta_t_abs) / CompositeRenderer.fmadd(eta_it, cos_theta_i_abs, cos_theta_t_abs)
+        #Rs = (cos_theta - eta * cosThetaT) / (cos_theta + eta * cosThetaT)
+        #Rp = (eta * cos_theta - cosThetaT) / (eta * cos_theta + cosThetaT)
+        # cosThetaT = -1*cosThetaT if cosThetaI > 0 else cosThetaT
+        return 0.5 * (Rs * Rs + Rp * Rp)
+
+    @staticmethod
+    def fresnel_conductor_exact(cos_theta, eta, k):
+        cosThetaI2 = cos_theta * cos_theta
+        sinThetaI2 = 1 - cosThetaI2
+        sinThetaI4 = sinThetaI2 * sinThetaI2
+        temp1 = eta * eta - k * k - sinThetaI2
+        a2pb2 = torch.sqrt(temp1 * temp1 + 4 * k * k * eta * eta)
+        a = torch.sqrt(0.5 * (a2pb2 + temp1))
+        term1 = a2pb2 + cosThetaI2
+        term2 = 2 * a * cos_theta
+        Rs2 = (term1 - term2) / (term1 + term2)
+        term3 = a2pb2 * cosThetaI2 + sinThetaI4
+        term4 = term2 * sinThetaI2
+        Rp2 = Rs2 * (term3 - term4) / (term3 + term4)
+        return 0.5 * (Rp2 + Rs2)
+
+    def metallic_reflection(self, cos_theta, eta, k):
+        # m_eta = 1.48958738
+        F = CompositeRenderer.fresnel_conductor_exact(cos_theta=cos_theta, eta=eta, k=k)
+        return F
+
+    def dielectric_reflection(self, cos_theta, eta):
+        F = fresnel_dielectric(cos_theta, cos_theta, eta)
+        return F
+
+    def main_metallic_reflection(self, cos_theta, eta, k, specular_albedo):
+        F = self.metallic_reflection(cos_theta, eta, k)
+        return specular_albedo * F
+
+    def main_dielectric_reflection(self, D, G, cos_theta, eta, specular_albedo):
+        F = self.dielectric_reflection(cos_theta, eta)
+        return specular_albedo * F * D * G / (4.0 * torch.abs(cos_theta))
 
     def main_specular_reflection(self, D, G, F_dielectric, metallic, spec_tint, cos_theta, color, intensity, eta):
         #cos_theta_i = torch.dot(normal, viewdir)
@@ -600,13 +660,13 @@ class CompositeRenderer(nn.Module):
         Gcc = self.calc_G_Clearcoat(cos_theta=cos_theta, alpha_u=0.25, alpha_v=0.25)
         return clearcoat * 0.25 * Fcc * Dcc * Gcc * torch.abs(cos_theta)
 
-    def diffuse_reflection(self, cos_theta, alpha, brdf, base_color):
+    def diffuse_reflection(self, cos_theta, alpha, diffuse_albedo):
         ## https://github.com/mitsuba-renderer/mitsuba3/blob/16b133ecb940346ce17959589e0ce567eb7181e5/src/bsdfs/principled.cpp#L645
         F = self.schlick_weight(torch.abs(cos_theta))
         f_diff = (1.0 - 0.5 * F) * (1.0 - 0.5 * F)
         Rr = 2.0 * alpha * cos_theta * cos_theta
         f_retro = Rr * (F + F + F * F * (Rr - 1.0))
-        return brdf * torch.abs(cos_theta) * base_color * 1/np.pi * (f_diff + f_retro)
+        return torch.abs(cos_theta) * diffuse_albedo * 1/np.pi * (f_diff + f_retro)
 
     def sheen_evaluation(self):
         pass
@@ -720,6 +780,7 @@ class CompositeRenderer(nn.Module):
         #flatness = torch.clamp(params['flatness'], min=0.00001)
         #spec_trans = torch.clamp(params['spec_trans'], min=0.00001)
         metallic = torch.clamp(params['metallic'], min=0.00001)
+        dielectric = torch.clamp(params['dielectric'], min=0.00001)
         clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
         #eta = torch.clamp(params['eta'], min=0.000001)
         eta = 1.5
@@ -729,10 +790,11 @@ class CompositeRenderer(nn.Module):
 
         #sheen = torch.clamp(params['sheen'], min=0.00001)
 
-        brdf = (1.0 - metallic)
+        #brdf = (1.0 - metallic)
         #bsdf = (1.0 - metallic) * spec_trans
         #cos_theta_i = torch.dot(viewdir, normal)
         cos_theta_i = torch.sum(viewdir * normal, dim=-1, keepdims=True)
+        cos_theta_i = torch.clamp(cos_theta_i, min=0.00001, max=0.99999)
         cos_theta_o = cos_theta_i  # co-located setting
 
         #m_eta = 1.45
@@ -747,7 +809,7 @@ class CompositeRenderer(nn.Module):
         # decay light according to squared-distance falloff
         light_intensity = light / (distance * distance + 1e-10)
 
-        if True:
+        if False:
             main_specular_rgb = self.main_specular_reflection(D=D,
                                                               G=G,
                                                               F_dielectric=F_die,
@@ -757,23 +819,33 @@ class CompositeRenderer(nn.Module):
                                                               color=specular_albedo,
                                                               intensity=light_intensity,
                                                               eta=eta)
+        if True:
+            eta_cu = 0.28
+            k_cu = 5.4856
+            main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, eta_cu, k_cu, specular_albedo)
+            eta = 1.5
+            main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, eta, specular_albedo)
+            #main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
         else:
             main_specular_rgb = torch.zeros_like(specular_albedo)
 
-        if False:
+        if True:
             clearcoat_specular_rgb = self.secondary_isotropic_specular_reflection(cos_theta_i, clearcoat, eta)
         else:
             clearcoat_specular_rgb = torch.zeros_like(specular_albedo)
 
-        diffuse_rgb = self.diffuse_reflection(cos_theta=cos_theta_i,
-                                              alpha=1.0-roughness,
-                                              brdf=brdf,
-                                              base_color=diffuse_albedo)
+        diffuse_rgb = self.diffuse_reflection(cos_theta=cos_theta_i, alpha=1.0-roughness, diffuse_albedo=diffuse_albedo)
+
+        rgb = diffuse_rgb
+        rgb += main_metallic_rgb
+        rgb += main_dielectric_rgb
 
         ret = {"diffuse_rgb": diffuse_rgb,
-               "specular_rgb": main_specular_rgb,
+               "specular_rgb": main_metallic_rgb+main_dielectric_rgb,
+               "metallic_rgb": main_metallic_rgb,
+               "dielectric_rgb": main_dielectric_rgb,
                "clearcoat_specular": clearcoat_specular_rgb,
-               "rgb": diffuse_rgb + main_specular_rgb + clearcoat_specular_rgb}
+               "rgb": rgb}
         return ret
 
 

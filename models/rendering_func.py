@@ -10,10 +10,14 @@ def get_materials(color_network_dict, points, normals, features, is_metal=False)
     if not is_metal:
         specular_albedo = torch.mean(specular_albedo, dim=-1, keepdim=True).expand_as(specular_albedo)
     specular_roughness = color_network_dict["specular_roughness_network"](points, normals, None, features).abs() + 0.01
-    return diffuse_albedo, specular_albedo, specular_roughness
+    res = {}
+    res['diffuse_albedo'] = diffuse_albedo
+    res['specular_albedo'] = specular_albedo
+    res['specular_roughness'] = specular_roughness
+    return res
 
 
-def get_parameter_map(network_dict, points, normals, features):
+def get_materials_comp(network_dict, points, normals, features):
     res = {}
     diffuse_albedo = network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[..., [2, 1, 0]]
     specular_albedo = network_dict["specular_albedo_network"](points, normals, None, features).abs()
@@ -22,19 +26,20 @@ def get_parameter_map(network_dict, points, normals, features):
     spec_tint = network_dict["spec_tint_network"](points, normals, None, features).abs()
     specular_roughness = network_dict["specular_roughness_network"](points, normals, None, features).abs()
     anisotropic = network_dict["anisotropic_network"](points, normals, None, features).abs()
+    dielectric = network_dict["dielectric_network"](points, normals, None, features).abs()
     material_vector = network_dict["material_network"](points, None, None, features).abs()
     res['diffuse_albedo'] = diffuse_albedo
     res['specular_albedo'] = specular_albedo
     res['clearcoat'] = clearcoat
     res['metallic'] = metallic
+    res['dielectric'] = dielectric
     res['spec_tint'] = spec_tint
     res['specular_roughness'] = specular_roughness
     res['anisotropic'] = anisotropic
     res['material_vector'] = material_vector
-
     return res
 
-def get_materials_exp(color_network_dict, points, normals, features, is_metal=False):
+def get_materials_multi(color_network_dict, points, normals, features, is_metal=False):
     diffuse_albedo = color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[
         ..., [2, 1, 0]
     ]

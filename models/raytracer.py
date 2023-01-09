@@ -639,7 +639,11 @@ def render_normal_and_color(
             )
 
             if merge_render_results is None:
-                merge_render_results = dict([(x, [render_results[x]]) for x in render_results.keys()])
+                #print(render_results.keys())
+                if render_results is not None:
+                    merge_render_results = dict([(x, [render_results[x]]) for x in render_results.keys()])
+                else:
+                    merge_render_results = {}
             else:
                 for x in render_results.keys():
                     merge_render_results[x].append(render_results[x])
@@ -697,9 +701,7 @@ def render_edge_pixels(
     # ic(pos_side_results.keys(), pos_side_results['convergent_mask'].sum())
 
     # assign colors to edge pixels
-    edge_color = pos_side_results["color"] * pos_side_weight.unsqueeze(-1) + neg_side_results["color"] * (
-        1.0 - pos_side_weight.unsqueeze(-1)
-    )
+    edge_color = pos_side_results["color"] * pos_side_weight.unsqueeze(-1) + neg_side_results["color"] * (1.0 - pos_side_weight.unsqueeze(-1))
     # results["color"][edge_mask] = edge_color
     # results["normal"][edge_mask] = edge_normals
 
@@ -747,10 +749,7 @@ def render_edge_pixels(
         pos_side_color.view(-1, 3)[edge_pixel_idx] = pos_side_results["color"]
         neg_side_color = (
             torch.zeros(
-                list(edge_mask.shape)
-                + [
-                    3,
-                ]
+                list(edge_mask.shape) + [3]
             )
             .float()
             .to(edge_mask.device)
