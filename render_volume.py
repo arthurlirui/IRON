@@ -642,8 +642,12 @@ if __name__ == "__main__":
             runner.train_NIRRGB(data_type='rgb')
             runner.train_NIRRGB(data_type='nir')
         #runner.train_NIRRGB(data_type='rgb')
-        if os.path.basename(args.conf) == 'nir.conf':
+        elif os.path.basename(args.conf) == 'nir.conf':
             runner.train_NIRRGB(data_type='nir')
+        elif os.path.basename(args.conf) == 'flash_rgb_real.conf':
+            runner.train_NIRRGB(data_type='rgb')
+        else:
+            runner.train_NIRRGB(data_type='rgb')
     elif args.mode == "validate_mesh":
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
     elif args.mode.startswith("interpolate"):  # Interpolate views given two image indices

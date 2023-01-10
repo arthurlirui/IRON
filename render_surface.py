@@ -157,10 +157,11 @@ def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, norm
     specular_roughness = rgb[..., 0:1].clone()
     if True:
         clearcoat = specular_roughness.clone()
-        metallic = specular_roughness.clone()
+        metallic = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
+        dielectric = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
         spec_tint = specular_roughness.clone()
 
-    material_vector = torch.zeros(dots_sh + [4], dtype=torch.float32, device=interior_mask.device)
+    #material_vector = torch.zeros(dots_sh + [4], dtype=torch.float32, device=interior_mask.device)
     normals_pad = rgb.clone()
 
     if interior_mask.any():
@@ -187,9 +188,10 @@ def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, norm
         specular_roughness[interior_mask] = params['specular_roughness']
         normals_pad[interior_mask] = normals
 
-        clearcoat[interior_mask] = params['clearcoat']
+        #clearcoat[interior_mask] = params['clearcoat']
         metallic[interior_mask] = params['metallic']
-        spec_tint[interior_mask] = params['spec_tint']
+        dielectric[interior_mask] = params['dielectric']
+        #spec_tint[interior_mask] = params['spec_tint']
 
     return {
         "color": rgb,
@@ -199,10 +201,12 @@ def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, norm
         "specular_albedo": specular_albedo,
         "specular_roughness": specular_roughness,
         "normal": normals_pad,
-        "clearcoat": clearcoat,
-        "metallic": metallic_rgb,
-        "dielectric": dielectric_rgb,
-        "spec_tint": spec_tint
+        #"clearcoat": clearcoat,
+        "metallic_rgb": metallic_rgb,
+        "metallic": metallic,
+        "dielectric_rgb": dielectric_rgb,
+        "dielectric": dielectric,
+        #"spec_tint": spec_tint
     }
 
 render_fn = render_fn_comp
@@ -460,6 +464,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     img_l2_loss = torch.Tensor([0.0]).cuda()
     img_ssim_loss = torch.Tensor([0.0]).cuda()
     roughrange_loss = torch.Tensor([0.0]).cuda()
+    metallicness_loss = torch.Tensor([0.0]).cuda()
     material_type_loss = torch.Tensor([0.0]).cuda()
     material_sparse_loss = torch.Tensor([0.0]).cuda()
 
@@ -498,6 +503,12 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         if roughness.numel() > 0:
             roughrange_loss = (roughness - 0.5).mean() * args.roughrange_weight
 
+        metallicness = results["metallic"][mask]
+        metallicness_loss = (torch.abs(metallicness - 0.1)).mean() * 0.1
+        #metallicness = metallicness[metallicness > 0.0001]
+        #if metallicness.numel() > 0:
+        #    metallicness_loss = (metallicness - 0.5).mean() * args.roughrange_weight
+
         # constraint for material map
         if renderer_name == 'multi':
             material_type_loss = torch.norm(torch.sum(torch.abs(results["material_vector"]), dim=-1) - 1.0, p=2)
@@ -508,7 +519,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     if renderer_name == 'multi':
         loss = img_loss + eik_loss + roughrange_loss + 0.0 * sparse_loss + 0.0 * material_type_loss + 50.0 * material_sparse_loss
     if renderer_name == 'comp':
-        loss = img_loss + eik_loss + roughrange_loss
+        loss = img_loss + eik_loss + roughrange_loss + metallicness_loss
     #loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + material_type_loss
 
     loss.backward()
@@ -523,6 +534,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         writer.add_scalar("loss/img_ssim_loss", img_ssim_loss, global_step)
         writer.add_scalar("loss/eik_loss", eik_loss, global_step)
         writer.add_scalar("loss/roughrange_loss", roughrange_loss, global_step)
+        writer.add_scalar("loss/metallicness_loss", metallicness_loss, global_step)
         #writer.add_scalar("loss/sparse_loss", sparse_loss, global_step)
         #writer.add_scalar("loss/material_type_loss", material_type_loss, global_step)
         #writer.add_scalar("loss/material_spare_loss", material_type_loss, global_step)
@@ -546,7 +558,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             img_ssim_loss.item(),
             eik_loss.item(),
             roughrange_loss.item(),
-            #sparse_loss.item(),
+            metallicness_loss.item(),
             color_network_dict["point_light_network"].get_light().item(),
         )
 
@@ -606,21 +618,21 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         if renderer_name == 'multi':
             scale = 1.0
             rough_plastic_map = results["material_vector"][..., 0]*scale
-            dielectric_map = results["material_vector"][..., 1]*scale
+            dielectric_rgb = results["material_vector"][..., 1] * scale
             rough_conductor_map = results["material_vector"][..., 2]*scale
             smooth_conductor_map = results["material_vector"][..., 3]*scale
 
-            tmap = np.stack([rough_plastic_map, dielectric_map, rough_conductor_map, smooth_conductor_map], axis=-1)
+            tmap = np.stack([rough_plastic_map, dielectric_rgb, rough_conductor_map, smooth_conductor_map], axis=-1)
             maxv, minv = tmap[:].max(), tmap[:].min()
             rough_plastic_map = (rough_plastic_map-minv) / (maxv-minv + 1e-4)
-            dielectric_map = (dielectric_map - minv) / (maxv - minv + 1e-4)
+            dielectric_rgb = (dielectric_rgb - minv) / (maxv - minv + 1e-4)
             rough_conductor_map = (rough_conductor_map - minv) / (maxv - minv + 1e-4)
             smooth_conductor_map = (smooth_conductor_map - minv) / (maxv - minv + 1e-4)
 
         if renderer_name == 'comp':
             #clearcoat_map = results['clearcoat']
-            metallic_map = results['metallic']
-            dielectric_map = results['dielectric']
+            metallic_rgb = results['metallic_rgb']
+            dielectric_rgb = results['dielectric_rgb']
             #spec_tint_map = results['spec_tint_rgb']
 
         if args.inv_gamma_gt:
@@ -632,7 +644,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
 
             if renderer_name == 'multi':
                 rough_plastic_map = np.power(rough_plastic_map + 1e-6, 1.0/2.2)
-                dielectric_map = np.power(dielectric_map + 1e-6, 1.0/2.2)
+                dielectric_rgb = np.power(dielectric_rgb + 1e-6, 1.0 / 2.2)
                 rough_conductor_map = np.power(rough_conductor_map + 1e-6, 1.0/2.2)
                 smooth_conductor_map = np.power(smooth_conductor_map + 1e-6, 1.0/2.2)
 
@@ -641,21 +653,21 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
                 #maxv, minv = np.max(clearcoat_map[:]), np.min(clearcoat_map[:])
                 #clearcoat_map = (clearcoat_map - minv) / (maxv - minv)
 
-                metallic_map = np.power(metallic_map + 1e-6, 1.0 / 2.2)
-                maxv, minv = np.max(metallic_map[:]), np.min(metallic_map[:])
-                metallic_map = (metallic_map - minv) / (maxv - minv)
+                metallic_rgb = np.power(metallic_rgb + 1e-6, 1.0 / 2.2)
+                maxv, minv = np.max(metallic_rgb[:]), np.min(metallic_rgb[:])
+                #metallic_rgb = (metallic_rgb - minv) / (maxv - minv)
 
                 #spec_tint_map = np.power(spec_tint_map + 1e-6, 1.0 / 2.2)
                 #maxv, minv = np.max(spec_tint_map[:]), np.min(spec_tint_map[:])
                 #spec_tint_map = (spec_tint_map - minv) / (maxv - minv)
 
-                dielectric_map = np.power(dielectric_map + 1e-6, 1.0 / 2.2)
+                dielectric_rgb = np.power(dielectric_rgb + 1e-6, 1.0 / 2.2)
 
                 depth = np.power(depth + 1e-6, 1.0 / 2.2)
                 depth = (depth - np.min(depth[:])) / (np.max(depth[:]) - np.min(depth[:]))
 
         if renderer_name == 'multi':
-            material_map3 = np.stack([rough_plastic_map, dielectric_map, rough_conductor_map], axis=-1)
+            material_map3 = np.stack([rough_plastic_map, dielectric_rgb, rough_conductor_map], axis=-1)
 
         gt_color_im = gt_color_im[..., :3]
         normal_im = normal_im[..., :3]
@@ -673,11 +685,11 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             img_list = [gt_color_im, normal_im, edge_mask_im,
                         color_im, diffuse_color_im, specular_color_im,
                         material_map3, smooth_conductor_map,
-                        rough_plastic_map, dielectric_map, rough_conductor_map]
+                        rough_plastic_map, dielectric_rgb, rough_conductor_map]
         if renderer_name == 'comp':
             img_list = [gt_color_im, normal_im, edge_mask_im,
                         color_im, diffuse_color_im, specular_color_im,
-                        metallic_map, dielectric_map, specular_roughness_im, depth]
+                        metallic_rgb, dielectric_rgb, specular_roughness_im]
         im = concatenate_result(image_list=img_list, imarray_length=3)
         imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))
 

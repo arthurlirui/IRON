@@ -23,11 +23,10 @@ def gen_all_scripts(sname='', script='', params=[]):
     ss += script
     return ss
 
-
-if __name__ == '__main__':
+def gen_data_flashlight_synthetic():
     ibex_system = '#!/bin/bash'
     print(ibex_system)
-    rootpath = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/IRON/data_flashlight'
+    rootpath = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/IRON/data_flashlight_real'
     datalist = os.listdir(rootpath)
 
     for folder in datalist:
@@ -43,3 +42,34 @@ if __name__ == '__main__':
         ss += f'sbatch train_syn_{folder}.sh\n'
     with open(f'train_syn_all.sh', 'w+') as f:
         f.write(ss)
+
+
+def gen_data_flashlight_real():
+    ibex_system = '#!/bin/bash'
+    print(ibex_system)
+    rootpath = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/IRON/data_flashlight_real'
+    datalist = os.listdir(rootpath)
+
+    for folder in datalist:
+        script = f'. ./train_real.sh {folder} 0'
+        content = gen_all_scripts(sname=folder, script=script)
+        print(content)
+        if True:
+            with open(f'train_real_{folder}.sh', 'w+') as f:
+                f.write(content)
+
+    ss = ''
+    for folder in datalist:
+        ss += f'sbatch train_real_{folder}.sh\n'
+    with open(f'train_real_all.sh', 'w+') as f:
+        f.write(ss)
+
+
+if __name__ == '__main__':
+    if False:
+        gen_data_flashlight()
+    if True:
+        gen_data_flashlight_real()
+
+
+

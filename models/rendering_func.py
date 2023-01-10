@@ -21,22 +21,22 @@ def get_materials_comp(network_dict, points, normals, features):
     res = {}
     diffuse_albedo = network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[..., [2, 1, 0]]
     specular_albedo = network_dict["specular_albedo_network"](points, normals, None, features).abs()
-    clearcoat = network_dict["clearcoat_network"](points, normals, None, features).abs()
+    #clearcoat = network_dict["clearcoat_network"](points, normals, None, features).abs()
     metallic = network_dict["metallic_network"](points, normals, None, features).abs()
-    spec_tint = network_dict["spec_tint_network"](points, normals, None, features).abs()
+    #spec_tint = network_dict["spec_tint_network"](points, normals, None, features).abs()
     specular_roughness = network_dict["specular_roughness_network"](points, normals, None, features).abs()
-    anisotropic = network_dict["anisotropic_network"](points, normals, None, features).abs()
+    #anisotropic = network_dict["anisotropic_network"](points, normals, None, features).abs()
     dielectric = network_dict["dielectric_network"](points, normals, None, features).abs()
-    material_vector = network_dict["material_network"](points, None, None, features).abs()
+    #material_vector = network_dict["material_network"](points, None, None, features).abs()
     res['diffuse_albedo'] = diffuse_albedo
     res['specular_albedo'] = specular_albedo
-    res['clearcoat'] = clearcoat
+    #res['clearcoat'] = clearcoat
     res['metallic'] = metallic
     res['dielectric'] = dielectric
-    res['spec_tint'] = spec_tint
+    #res['spec_tint'] = spec_tint
     res['specular_roughness'] = specular_roughness
-    res['anisotropic'] = anisotropic
-    res['material_vector'] = material_vector
+    #res['anisotropic'] = anisotropic
+    #res['material_vector'] = material_vector
     return res
 
 def get_materials_multi(color_network_dict, points, normals, features, is_metal=False):

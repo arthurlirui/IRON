@@ -588,10 +588,7 @@ class CompositeRenderer(nn.Module):
         return c + a*b
 
     @staticmethod
-    def fresnel_dielectric(cos_theta, cosThetaT, eta):
-        # if eta == 1:
-        #    cosThetaT = -1*cosThetaI
-        #    return 0
+    def fresnel_dielectric(cos_theta, eta):
         eta_it = torch.ones_like(cos_theta) * eta
         eta_it[cos_theta < 0] = 1.0 / eta
         eta_ti = torch.ones_like(cos_theta) * eta
@@ -602,9 +599,6 @@ class CompositeRenderer(nn.Module):
         cos_theta_t_abs = torch.sqrt(cosThetaTSqr)
         Rs = CompositeRenderer.fnmadd(eta_it, cos_theta_t_abs, cos_theta_i_abs) / CompositeRenderer.fmadd(eta_it, cos_theta_t_abs, cos_theta_i_abs)
         Rp = CompositeRenderer.fnmadd(eta_it, cos_theta_i_abs, cos_theta_t_abs) / CompositeRenderer.fmadd(eta_it, cos_theta_i_abs, cos_theta_t_abs)
-        #Rs = (cos_theta - eta * cosThetaT) / (cos_theta + eta * cosThetaT)
-        #Rp = (eta * cos_theta - cosThetaT) / (eta * cos_theta + cosThetaT)
-        # cosThetaT = -1*cosThetaT if cosThetaI > 0 else cosThetaT
         return 0.5 * (Rs * Rs + Rp * Rp)
 
     @staticmethod
@@ -662,11 +656,41 @@ class CompositeRenderer(nn.Module):
 
     def diffuse_reflection(self, cos_theta, alpha, diffuse_albedo):
         ## https://github.com/mitsuba-renderer/mitsuba3/blob/16b133ecb940346ce17959589e0ce567eb7181e5/src/bsdfs/principled.cpp#L645
+        alpha = torch.clamp(alpha, min=0.0001)
         F = self.schlick_weight(torch.abs(cos_theta))
         f_diff = (1.0 - 0.5 * F) * (1.0 - 0.5 * F)
         Rr = 2.0 * alpha * cos_theta * cos_theta
         f_retro = Rr * (F + F + F * F * (Rr - 1.0))
         return torch.abs(cos_theta) * diffuse_albedo * 1/np.pi * (f_diff + f_retro)
+
+    def diffuse_reflection_ggx(self, light_intensity, cos_theta, alpha, diffuse_albedo, eta=1.48958738):
+        ### assume eta is fixed
+        #m_eta = 1.48958738
+        alpha = torch.clamp(alpha, min=0.0001)
+        m_invEta2 = 1.0 / (eta * eta)
+
+        warpedCosTheta = cos_theta ** 0.25
+        alphaMin, alphaMax = 0, 4
+        warpedAlpha = ((alpha - alphaMin) / (alphaMax - alphaMin)) ** 0.25  # [..., 1]
+        tx = torch.floor(warpedCosTheta * self.num_theta_samples).long()
+        ty = torch.floor(warpedAlpha * self.num_alpha_samples).long()
+        t_idx = ty * self.num_theta_samples + tx
+
+        dots_sh = list(t_idx.shape[:-1])
+        data = self.MTS_TRANS.view([1] * len(dots_sh) + [-1]).expand(dots_sh + [-1])
+
+        t_idx = torch.clamp(t_idx, min=0, max=data.shape[-1] - 1).long()  # important
+        T12 = torch.clamp(torch.gather(input=data, index=t_idx, dim=-1), min=0.0, max=1.0)
+        T21 = T12  # colocated setting
+
+        ## compute Fdr: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/rtrans.h#L249
+        t_idx = torch.floor(warpedAlpha * self.num_alpha_samples).long()
+        data = self.MTS_DIFF_TRANS.view([1] * len(dots_sh) + [-1]).expand(dots_sh + [-1])
+        t_idx = torch.clamp(t_idx, min=0, max=data.shape[-1] - 1).long()  # important
+        Fdr = torch.clamp(1.0 - torch.gather(input=data, index=t_idx, dim=-1), min=0.0, max=1.0)  # [..., 1]
+
+        diffuse_rgb = light_intensity * (diffuse_albedo / (1.0 - Fdr + 1e-10) / np.pi) * cos_theta * T12 * T21 * m_invEta2
+        return diffuse_rgb
 
     def sheen_evaluation(self):
         pass
@@ -775,16 +799,16 @@ class CompositeRenderer(nn.Module):
         alpha: [..., 1]; roughness
         params.keys() = ['anisotropic', 'roughness', 'metallic']
         """
-        anisotropic = torch.clamp(params['anisotropic'], min=0.00001)
+        #anisotropic = torch.clamp(params['anisotropic'], min=0.00001)
         roughness = torch.clamp(params['specular_roughness'], min=0.00001)
         #flatness = torch.clamp(params['flatness'], min=0.00001)
         #spec_trans = torch.clamp(params['spec_trans'], min=0.00001)
         metallic = torch.clamp(params['metallic'], min=0.00001)
         dielectric = torch.clamp(params['dielectric'], min=0.00001)
-        clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
+        #clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
         #eta = torch.clamp(params['eta'], min=0.000001)
-        eta = 1.5
-        spec_tint = torch.clamp(params['spec_tint'], min=0.000001)
+        eta = 1.48958738
+        #spec_tint = torch.clamp(params['spec_tint'], min=0.000001)
         specular_albedo = torch.clamp(params['specular_albedo'], min=0.00001)
         diffuse_albedo = torch.clamp(params['diffuse_albedo'], min=0.00001)
 
@@ -800,9 +824,10 @@ class CompositeRenderer(nn.Module):
         #m_eta = 1.45
         #m_inveta = 1/m_eta
         inveta = 1.0 / eta
-        alpha_u, alpha_v = calc_dist_params(anisotropic=anisotropic, roughness=roughness, has_anisotropic=True)
-        F_die = fresnel_dielectric(cosThetaI=cos_theta_i, cosThetaT=cos_theta_i, eta=eta)
-
+        #alpha_u, alpha_v = calc_dist_params(anisotropic=anisotropic, roughness=roughness, has_anisotropic=True)
+        #alpha = 0.5 * (alpha_u + alpha_v)
+        #F_die = fresnel_dielectric(cosThetaI=cos_theta_i, cosThetaT=cos_theta_i, eta=eta)
+        alpha_u, alpha_v = roughness, roughness
         D = self.calc_D_specular(cos_theta_i, eta)
         G = self.calc_G_specular(cos_theta_i, alpha_u, alpha_v)
 
@@ -829,14 +854,20 @@ class CompositeRenderer(nn.Module):
         else:
             main_specular_rgb = torch.zeros_like(specular_albedo)
 
-        if True:
+        if False:
             clearcoat_specular_rgb = self.secondary_isotropic_specular_reflection(cos_theta_i, clearcoat, eta)
         else:
             clearcoat_specular_rgb = torch.zeros_like(specular_albedo)
 
-        diffuse_rgb = self.diffuse_reflection(cos_theta=cos_theta_i, alpha=1.0-roughness, diffuse_albedo=diffuse_albedo)
+        #diffuse_rgb = self.diffuse_reflection(cos_theta=cos_theta_i, alpha=1.0-roughness, diffuse_albedo=diffuse_albedo)
+        diffuse_rgb = self.diffuse_reflection_ggx(light_intensity=light_intensity,
+                                                  cos_theta=cos_theta_i,
+                                                  alpha=roughness,
+                                                  diffuse_albedo=diffuse_albedo)
 
         rgb = diffuse_rgb
+        main_metallic_rgb = metallic * light_intensity * main_metallic_rgb
+        main_dielectric_rgb = dielectric * light_intensity * main_dielectric_rgb
         rgb += main_metallic_rgb
         rgb += main_dielectric_rgb
 
