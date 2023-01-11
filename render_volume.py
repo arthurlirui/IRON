@@ -19,7 +19,9 @@ from models.renderer import NeuSRenderer
 
 class Runner:
     def __init__(self, conf_path, mode="train",
-                 case="CASE_NAME", nir_case="NIR_NAME", rgb_case="RGB_NAME", is_continue=False):
+                 case="CASE_NAME",
+                 nir_case="NIR_NAME",
+                 rgb_case="RGB_NAME", is_continue=False):
         self.device = torch.device("cuda")
 
         # Configuration
@@ -40,10 +42,12 @@ class Runner:
         self.base_exp_dir = self.conf["general.base_exp_dir"]
         os.makedirs(self.base_exp_dir, exist_ok=True)
 
-        if os.path.exists(self.conf['dataset']['rgb_dir']):
-            self.dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
-        if os.path.exists(self.conf['dataset']['nir_dir']):
-            self.dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
+        self.dataset = DatasetNIRRGB(self.conf["dataset"])
+        # if os.path.exists(self.conf['dataset']['rgb_dir']):
+        #     #self.rgb_dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
+        #     self.rgb_dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
+        # if os.path.exists(self.conf['dataset']['nir_dir']):
+        #     self.nir_dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
 
         #self.dataset_nir = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
         #self.dataset_rgb = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
@@ -77,14 +81,18 @@ class Runner:
 
         # Networks
         params_to_train = []
-        self.nerf_outside = NeRFdual(**self.conf["model.nerf"]).to(self.device)
+        self.nerf_outside = NeRF(**self.conf["model.nerf"]).to(self.device)
+        self.nir_nerf_outside = NeRF(**self.conf["model.nerf"]).to(self.device)
         self.sdf_network = SDFNetwork(**self.conf["model.sdf_network"]).to(self.device)
         self.deviation_network = SingleVarianceNetwork(**self.conf["model.variance_network"]).to(self.device)
         self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
+        self.nir_network = RenderingNetwork(**self.conf["model.nir_network"]).to(self.device)
         params_to_train += list(self.nerf_outside.parameters())
         params_to_train += list(self.sdf_network.parameters())
         params_to_train += list(self.deviation_network.parameters())
         params_to_train += list(self.color_network.parameters())
+        params_to_train += list(self.nir_nerf_outside.parameters())
+        params_to_train += list(self.nir_network.parameters())
 
         self.optimizer = torch.optim.Adam(params_to_train, lr=self.learning_rate)
 
@@ -93,6 +101,14 @@ class Runner:
             self.sdf_network,
             self.deviation_network,
             self.color_network,
+            **self.conf["model.neus_renderer"]
+        )
+
+        self.renderer_nir = NeuSRenderer(
+            self.nir_nerf_outside,
+            self.sdf_network,
+            self.deviation_network,
+            self.nir_network,
             **self.conf["model.neus_renderer"]
         )
 
@@ -114,6 +130,186 @@ class Runner:
         # Backup codes and configs for debug
         if self.mode[:5] == "train":
             self.file_backup()
+
+    def train_NIR(self):
+        self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
+        self.update_learning_rate()
+        res_step = self.NIR_end_iter - self.iter_step
+        image_perm = torch.randperm(self.dataset.n_NIR)
+
+        for iter_i in tqdm(range(res_step)):
+            data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)],
+                                                   self.batch_size, data_type='nir')
+
+            rays_o, rays_d, true_rgb, mask = (data[:, 0:3], data[:, 3:6], data[:, 6:9], data[:, 9:10])
+            near, far = self.dataset.near_far_from_sphere(rays_o, rays_d)
+
+            background_rgb = None
+            background_nir = None
+            if self.use_white_bkgd:
+                background_rgb = torch.ones([1, 3])
+                background_nir = torch.zeros([1, 3])
+
+            if self.mask_weight > 0.0:
+                mask = (mask > 0.5).float()
+            else:
+                mask = torch.ones_like(mask)
+
+            mask_sum = mask.sum() + 1e-5
+            render_out = self.renderer_nir.render(
+                rays_o,
+                rays_d,
+                near,
+                far,
+                background_rgb=background_nir,
+                cos_anneal_ratio=self.get_cos_anneal_ratio(),
+            )
+
+            color_fine = render_out["color_fine"]
+            s_val = render_out["s_val"]
+            cdf_fine = render_out["cdf_fine"]
+            gradient_error = render_out["gradient_error"]
+            weight_max = render_out["weight_max"]
+            weight_sum = render_out["weight_sum"]
+            pred_rgb = color_fine[..., :3]
+
+            # Loss
+            color_error = (pred_rgb - true_rgb) * mask
+
+            # previous
+            color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
+
+            # Arthur
+            # color_fine_loss = F.l2_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
+            # color_fine_loss = F.mse_loss(color_fine * mask, true_rgb * mask, reduction='sum') / mask_sum
+            psnr = 20.0 * torch.log10(1.0 / (((pred_rgb - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+            eikonal_loss = gradient_error
+
+            mask_loss = F.binary_cross_entropy(weight_sum.clip(1e-3, 1.0 - 1e-3), mask)
+
+            loss = color_fine_loss + eikonal_loss * self.igr_weight + mask_loss * self.mask_weight
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            self.iter_step += 1
+
+            self.writer.add_scalar("Loss/loss", loss, self.iter_step)
+            self.writer.add_scalar("Loss/color_loss", color_fine_loss, self.iter_step)
+            self.writer.add_scalar("Loss/eikonal_loss", eikonal_loss, self.iter_step)
+            self.writer.add_scalar("Statistics/s_val", s_val.mean(), self.iter_step)
+            self.writer.add_scalar("Statistics/cdf", (cdf_fine[:, :1] * mask).sum() / mask_sum, self.iter_step)
+            self.writer.add_scalar("Statistics/weight_max", (weight_max * mask).sum() / mask_sum, self.iter_step)
+            self.writer.add_scalar("Statistics/psnr", psnr, self.iter_step)
+
+            if self.iter_step % self.report_freq == 0:
+                print(self.base_exp_dir)
+                print("iter:{:8>d} loss = {} lr={}".format(self.iter_step, loss, self.optimizer.param_groups[0]["lr"]))
+
+            if self.iter_step % self.save_freq == 0:
+                self.save_checkpoint()
+
+            if self.iter_step % self.val_freq == 0:
+                self.validate_image(data_type='nir')
+
+            if self.iter_step % self.val_mesh_freq == 0:
+                self.validate_mesh()
+
+            self.update_learning_rate()
+
+            if self.iter_step % len(image_perm) == 0:
+                image_perm = torch.randperm(self.dataset.n_NIR)
+
+    def train_RGB(self):
+        self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
+        self.update_learning_rate()
+        res_step = self.end_iter - self.iter_step
+        image_perm = torch.randperm(self.dataset.n_RGB)
+
+        for iter_i in tqdm(range(res_step)):
+            data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)],
+                                                   self.batch_size, data_type='rgb')
+
+            rays_o, rays_d, true_rgb, mask = (data[:, 0:3], data[:, 3:6], data[:, 6:9], data[:, 9:10])
+            near, far = self.dataset.near_far_from_sphere(rays_o, rays_d)
+
+            background_rgb = None
+            background_nir = None
+            if self.use_white_bkgd:
+                background_rgb = torch.ones([1, 3])
+                background_nir = torch.zeros([1, 3])
+
+            if self.mask_weight > 0.0:
+                mask = (mask > 0.5).float()
+            else:
+                mask = torch.ones_like(mask)
+
+            mask_sum = mask.sum() + 1e-5
+            render_out = self.renderer.render(
+                rays_o,
+                rays_d,
+                near,
+                far,
+                background_rgb=background_rgb,
+                cos_anneal_ratio=self.get_cos_anneal_ratio(),
+            )
+
+            color_fine = render_out["color_fine"]
+            s_val = render_out["s_val"]
+            cdf_fine = render_out["cdf_fine"]
+            gradient_error = render_out["gradient_error"]
+            weight_max = render_out["weight_max"]
+            weight_sum = render_out["weight_sum"]
+            pred_rgb = color_fine[..., :3]
+
+            # Loss
+            color_error = (pred_rgb - true_rgb) * mask
+
+            # previous
+            color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
+
+            # Arthur
+            # color_fine_loss = F.l2_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
+            # color_fine_loss = F.mse_loss(color_fine * mask, true_rgb * mask, reduction='sum') / mask_sum
+            psnr = 20.0 * torch.log10(1.0 / (((pred_rgb - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+            eikonal_loss = gradient_error
+
+            mask_loss = F.binary_cross_entropy(weight_sum.clip(1e-3, 1.0 - 1e-3), mask)
+
+            loss = color_fine_loss + eikonal_loss * self.igr_weight + mask_loss * self.mask_weight
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            self.iter_step += 1
+
+            self.writer.add_scalar("Loss/loss", loss, self.iter_step)
+            self.writer.add_scalar("Loss/color_loss", color_fine_loss, self.iter_step)
+            self.writer.add_scalar("Loss/eikonal_loss", eikonal_loss, self.iter_step)
+            self.writer.add_scalar("Statistics/s_val", s_val.mean(), self.iter_step)
+            self.writer.add_scalar("Statistics/cdf", (cdf_fine[:, :1] * mask).sum() / mask_sum, self.iter_step)
+            self.writer.add_scalar("Statistics/weight_max", (weight_max * mask).sum() / mask_sum, self.iter_step)
+            self.writer.add_scalar("Statistics/psnr", psnr, self.iter_step)
+
+            if self.iter_step % self.report_freq == 0:
+                print(self.base_exp_dir)
+                print("iter:{:8>d} loss = {} lr={}".format(self.iter_step, loss, self.optimizer.param_groups[0]["lr"]))
+
+            if self.iter_step % self.save_freq == 0:
+                self.save_checkpoint()
+
+            if self.iter_step % self.val_freq == 0:
+                self.validate_image(data_type='rgb')
+
+            if self.iter_step % self.val_mesh_freq == 0:
+                self.validate_mesh()
+
+            self.update_learning_rate()
+
+            if self.iter_step % len(image_perm) == 0:
+                image_perm = torch.randperm(self.dataset.n_RGB)
 
     def train_NIRRGB(self, data_type='rgb'):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
@@ -163,7 +359,7 @@ class Runner:
             weight_max = render_out["weight_max"]
             weight_sum = render_out["weight_sum"]
             pred_rgb = color_fine[..., :3]
-            pred_nir = color_fine[..., 3:4]
+            pred_nir = color_fine[..., 3:6]
             # Loss
             if data_type == 'rgb':
                 color_error = (pred_rgb - true_rgb) * mask
@@ -203,16 +399,8 @@ class Runner:
             self.writer.add_scalar("Loss/color_loss", color_fine_loss, self.iter_step)
             self.writer.add_scalar("Loss/eikonal_loss", eikonal_loss, self.iter_step)
             self.writer.add_scalar("Statistics/s_val", s_val.mean(), self.iter_step)
-            self.writer.add_scalar(
-                "Statistics/cdf",
-                (cdf_fine[:, :1] * mask).sum() / mask_sum,
-                self.iter_step,
-            )
-            self.writer.add_scalar(
-                "Statistics/weight_max",
-                (weight_max * mask).sum() / mask_sum,
-                self.iter_step,
-            )
+            self.writer.add_scalar("Statistics/cdf", (cdf_fine[:, :1] * mask).sum() / mask_sum, self.iter_step)
+            self.writer.add_scalar("Statistics/weight_max", (weight_max * mask).sum() / mask_sum, self.iter_step)
             self.writer.add_scalar("Statistics/psnr", psnr, self.iter_step)
 
             if self.iter_step % self.report_freq == 0:
@@ -237,9 +425,6 @@ class Runner:
                     image_perm = torch.randperm(self.dataset.n_NIR)
                 else:
                     image_perm = torch.randperm(self.dataset.n_RGB)
-
-    def train_NIR(self):
-        pass
 
     def train(self):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
@@ -312,16 +497,8 @@ class Runner:
             self.writer.add_scalar("Loss/color_loss", color_fine_loss, self.iter_step)
             self.writer.add_scalar("Loss/eikonal_loss", eikonal_loss, self.iter_step)
             self.writer.add_scalar("Statistics/s_val", s_val.mean(), self.iter_step)
-            self.writer.add_scalar(
-                "Statistics/cdf",
-                (cdf_fine[:, :1] * mask).sum() / mask_sum,
-                self.iter_step,
-            )
-            self.writer.add_scalar(
-                "Statistics/weight_max",
-                (weight_max * mask).sum() / mask_sum,
-                self.iter_step,
-            )
+            self.writer.add_scalar("Statistics/cdf", (cdf_fine[:, :1] * mask).sum() / mask_sum, self.iter_step)
+            self.writer.add_scalar("Statistics/weight_max", (weight_max * mask).sum() / mask_sum, self.iter_step)
             self.writer.add_scalar("Statistics/psnr", psnr, self.iter_step)
 
             if self.iter_step % self.report_freq == 0:
@@ -432,16 +609,30 @@ class Runner:
 
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
-            background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
+            #background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
 
-            render_out = self.renderer.render(
-                rays_o_batch,
-                rays_d_batch,
-                near,
-                far,
-                cos_anneal_ratio=self.get_cos_anneal_ratio(),
-                background_rgb=background_rgb,
-            )
+            if data_type == 'nir':
+                background_rgb = torch.zeros([1, 3]) if self.use_white_bkgd else None
+                render_out = self.renderer_nir.render(
+                    rays_o_batch,
+                    rays_d_batch,
+                    near,
+                    far,
+                    cos_anneal_ratio=self.get_cos_anneal_ratio(),
+                    background_rgb=background_rgb,
+                )
+                n_samples = self.renderer_nir.n_samples + self.renderer_nir.n_importance
+            elif data_type == 'rgb':
+                background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
+                render_out = self.renderer.render(
+                    rays_o_batch,
+                    rays_d_batch,
+                    near,
+                    far,
+                    cos_anneal_ratio=self.get_cos_anneal_ratio(),
+                    background_rgb=background_rgb,
+                )
+                n_samples = self.renderer.n_samples + self.renderer.n_importance
 
             def feasible(key):
                 return (key in render_out) and (render_out[key] is not None)
@@ -449,7 +640,7 @@ class Runner:
             if feasible("color_fine"):
                 out_rgb_fine.append(render_out["color_fine"].detach().cpu().numpy())
             if feasible("gradients") and feasible("weights"):
-                n_samples = self.renderer.n_samples + self.renderer.n_importance
+                #n_samples = self.renderer.n_samples + self.renderer.n_importance
                 normals = render_out["gradients"] * render_out["weights"][:, :n_samples, None]
                 if feasible("inside_sphere"):
                     normals = normals * render_out["inside_sphere"][..., None]
@@ -461,13 +652,16 @@ class Runner:
         RGB_fine = None
         NIR_fine = None
         if len(out_rgb_fine) > 0:
-            img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 4, -1]) * 256).clip(0, 255)
-            RGB_fine = img_fine[:, :, 0:3, :]
-            NIR_fine = img_fine[:, :, 3:4, :]
+            #img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 4, -1]) * 256).clip(0, 255)
+            #RGB_fine = img_fine[:, :, 0:3, :]
+            #NIR_fine = img_fine[:, :, 3:4, :]
+            #img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
             if data_type == 'rgb':
-                img_fine = RGB_fine
+                img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
             if data_type == 'nir':
-                img_fine = np.concatenate([NIR_fine, NIR_fine, NIR_fine], axis=2)
+                NIR_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
+                #img_fine = np.concatenate([NIR_fine, NIR_fine, NIR_fine], axis=2)
+                img_fine = NIR_fine
 
         normal_img = None
         if len(out_normal_fine) > 0:
@@ -485,6 +679,7 @@ class Runner:
         os.makedirs(os.path.join(self.base_exp_dir, "validations_fine"), exist_ok=True)
         os.makedirs(os.path.join(self.base_exp_dir, "normals"), exist_ok=True)
 
+        print(normal_img.shape, img_fine.shape)
         for i in range(img_fine.shape[-1]):
             if len(out_rgb_fine) > 0:
                 if False:
@@ -517,7 +712,8 @@ class Runner:
                 # )
             if len(out_normal_fine) > 0:
                 normal_path = os.path.join(self.base_exp_dir,
-                                           "normals", "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
+                                           "normals",
+                                           "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
                 self.dataset.image_writer(normal_path, normal_img[..., i].astype('uint8'))
                 # cv.imwrite(
                 #     os.path.join(
@@ -639,8 +835,8 @@ if __name__ == "__main__":
         #runner.train()
         conf_filename = os.path.basename(args.conf)
         if conf_filename == 'nirrgb.conf':
-            runner.train_NIRRGB(data_type='rgb')
-            runner.train_NIRRGB(data_type='nir')
+            #runner.train_NIR()
+            runner.train_RGB()
         #runner.train_NIRRGB(data_type='rgb')
         elif os.path.basename(args.conf) == 'nir.conf':
             runner.train_NIRRGB(data_type='nir')

@@ -142,14 +142,17 @@ class NeuSRenderer:
         self.nerf = nerf
         self.sdf_network = sdf_network
         self.deviation_network = deviation_network
+
         self.color_network = color_network
+        #self.nir_network = nir_network
+
         self.n_samples = n_samples
         self.n_importance = n_importance
         self.n_outside = n_outside
         self.up_sample_steps = up_sample_steps
         self.perturb = perturb
 
-    def render_core_outside(self, rays_o, rays_d, z_vals, sample_dist, nerf, background_rgb=None, background_nir=None):
+    def render_core_outside(self, rays_o, rays_d, z_vals, sample_dist, nerf, background_rgb=None):
         """
         Render background
         """
@@ -171,33 +174,25 @@ class NeuSRenderer:
         pts = pts.reshape(-1, 3 + int(self.n_outside > 0))
         dirs = dirs.reshape(-1, 3)
 
-        if True:
-            density, sampled_color, sample_nir = nerf(pts, dirs)
-        else:
-            #inputs = torch.cat([pts[:, :3], dirs], dim=-1)
-            inputs = pts[:, :3]
-            #print(inputs.shape)
-            #outputs = nerf.model(inputs)
-            #print(outputs.shape)
-            #density, sampled_color = outputs[:, 0:1], outputs[:, 1:]
-            #sampled_color, density = nerf(pts[:, :3], dirs[:, :3])
+        #density, sampled_color, sample_nir = nerf(pts, dirs)
+        density, sampled_color = nerf(pts, dirs)
 
         alpha = 1.0 - torch.exp(-F.softplus(density.reshape(batch_size, n_samples)) * dists)
         alpha = alpha.reshape(batch_size, n_samples)
         weights = alpha * torch.cumprod(torch.cat([torch.ones([batch_size, 1]), 1.0 - alpha + 1e-7], -1), -1)[:, :-1]
         sampled_color = sampled_color.reshape(batch_size, n_samples, 3)
-        sampled_nir = sample_nir.reshape(batch_size, n_samples, 1)
+        #sampled_nir = sample_nir.reshape(batch_size, n_samples, 1)
         color = (weights[:, :, None] * sampled_color).sum(dim=1)
-        nir = (weights[:, :, None] * sampled_nir).sum(dim=1)
+        #nir = (weights[:, :, None] * sampled_nir).sum(dim=1)
         if background_rgb is not None:
             color = color + background_rgb * (1.0 - weights.sum(dim=-1, keepdim=True))
-            nir = nir + background_rgb * (1.0 - weights.sum(dim=-1, keepdim=True))
+            #nir = nir + background_rgb * (1.0 - weights.sum(dim=-1, keepdim=True))
 
         return {
             "color": color,
-            "nir": nir,
+            #"nir": nir,
             "sampled_color": sampled_color,
-            "sampled_nir": sampled_nir,
+            #"sampled_nir": sampled_nir,
             "alpha": alpha,
             "weights": weights,
         }
@@ -297,6 +292,7 @@ class NeuSRenderer:
 
         gradients = sdf_network.gradient(pts)
         sampled_color = color_network(pts, gradients, dirs, feature_vector).reshape(batch_size, n_samples, -1)
+        #sampled_nir = nir_network(pts, gradients, dirs, feature_vector).reshape(batch_size, n_samples, -1)
 
         inv_s = deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)  # Single parameter
         inv_s = inv_s.expand(batch_size * n_samples, 1)
@@ -437,8 +433,8 @@ class NeuSRenderer:
 
             background_sampled_color = ret_outside["sampled_color"]
             background_sampled_rgb = ret_outside["sampled_color"]
-            background_sampled_nir = ret_outside["sampled_nir"]
-            background_sampled_nirrgb = torch.cat([background_sampled_rgb, background_sampled_nir], dim=-1)
+            #background_sampled_nir = ret_outside["sampled_nir"]
+            #background_sampled_nirrgb = torch.cat([background_sampled_rgb, background_sampled_nir], dim=-1)
             background_alpha = ret_outside["alpha"]
 
         # Render core
@@ -452,7 +448,7 @@ class NeuSRenderer:
             self.color_network,
             background_rgb=background_rgb,
             background_alpha=background_alpha,
-            background_sampled_color=background_sampled_nirrgb,
+            background_sampled_color=background_sampled_color,
             cos_anneal_ratio=cos_anneal_ratio,
         )
 

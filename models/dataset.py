@@ -101,8 +101,8 @@ class Dataset:
         #self.image_reader_exr = conf.get_string("image_reader_exr", default='pyexr')
 
         # initial image reader: use same image reader for any place
-        self.image_reader = image_reader(reader_name='imageio')
-        self.image_writer = image_writer(writer_name='imageio')
+        self.image_reader = image_reader(reader_name='opencv')
+        self.image_writer = image_writer(writer_name='opencv')
         # if self.image_reader == 'imageio':
         #     def image_imageio(im_name):
         #         return imageio.v3.imread(im_name)[:, :, :3]
@@ -365,7 +365,7 @@ class Dataset:
 
 
 class DatasetNIRRGB:
-    def __init__(self, conf, dataset_type='nir'):
+    def __init__(self, conf):
         super(DatasetNIRRGB, self).__init__()
         print("Loading NIR RGB data: Begin")
         self.device = torch.device("cuda")
@@ -407,9 +407,10 @@ class DatasetNIRRGB:
                     #cam_dict_list.extend(camera_dict)
                     self.camera_dict = camera_dict
                 # check non-exist files and remove empty keys
-
-        target_radius = 1.0
-        translate, scale = get_tf_cams(self.camera_dict, target_radius=target_radius)
+        use_trans = False
+        if use_trans:
+            target_radius = 1.0
+            translate, scale = get_tf_cams(self.camera_dict, target_radius=target_radius)
 
         for x in list(self.camera_dict.keys()):
             if os.path.exists(os.path.join(self.data_rgb_dir, x)) or os.path.exists(os.path.join(self.data_nir_dir, x)):
@@ -422,7 +423,8 @@ class DatasetNIRRGB:
 
         for img_name in self.camera_dict:
             W2C = np.array(self.camera_dict[img_name]['W2C']).reshape((4, 4))
-            W2C = self.transform_pose(W2C, translate, scale)
+            if use_trans:
+                W2C = self.transform_pose(W2C, translate, scale)
             assert (np.isclose(np.linalg.det(W2C[:3, :3]), 1.))
             self.camera_dict[img_name]['W2C'] = W2C
 
