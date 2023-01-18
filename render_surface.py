@@ -275,7 +275,7 @@ pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 #RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, folder_name='nir')
-image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB_alignRGB(args.data_dir, args.folder_name, 'cam_dict.json')
+image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB_alignRGB(args.data_dir, args.folder_name, 'cam_dict_norm.json')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 cameras = [
     Camera(W=gt_images[i].shape[1], H=gt_images[i].shape[0], K=Ks[i].cuda(), W2C=W2Cs[i].cuda()) for i in range(gt_images.shape[0])

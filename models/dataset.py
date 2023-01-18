@@ -792,15 +792,15 @@ def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_d
     rgbpath = os.path.join(parpath, 'rgb')
     nirpath = os.path.join(parpath, 'nir')
     imglist = glob.glob(os.path.join(datadir, folder_name, '*.*'))
-    with open(os.path.join(datadir, file_name)) as f:
+    with open(os.path.join(parpath, file_name)) as f:
         cam_dict = json.load(f)
 
-    use_trans = True
+    use_trans = False
     if use_trans:
         target_radius = 1.0
-        with open(os.path.join(rgbpath, file_name)) as f:
+        with open(os.path.join(parpath, file_name)) as f:
             rgb_cam_dict = json.load(f)
-        with open(os.path.join(nirpath, file_name)) as f:
+        with open(os.path.join(parpath, file_name)) as f:
             nir_cam_dict = json.load(f)
         translate, scale = get_tf_cams(rgb_cam_dict, target_radius=target_radius)
 
