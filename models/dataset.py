@@ -489,10 +489,10 @@ class DatasetNIRRGB:
         else:
             try:
                 if self.enable_RGB:
-                    self.masks_RGB_lis = sorted(glob.glob(os.path.join(self.data_dir, 'masks_rgb', f'*.{self.file_type}')))
+                    self.masks_RGB_lis = sorted(glob.glob(os.path.join(self.data_dir, 'rgb', 'masks', f'*.{self.file_type}')))
                     self.masks_RGB_np = np.stack([self.image_reader(im_name) for im_name in self.masks_RGB_lis]) / 255.0
                 if self.enable_NIR:
-                    self.masks_NIR_lis = sorted(glob.glob(os.path.join(self.data_dir, 'masks_nir', f'*.{self.file_type}')))
+                    self.masks_NIR_lis = sorted(glob.glob(os.path.join(self.data_dir, 'nir', 'masks', f'*.{self.file_type}')))
                     self.masks_NIR_np = np.stack([self.image_reader(im_name) for im_name in self.masks_NIR_lis]) / 255.0
                 #self.masks_np = np.stack([cv2.imread(im_name) for im_name in self.masks_lis]) / 255.0
             except:

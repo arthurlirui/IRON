@@ -127,7 +127,7 @@ if __name__ == '__main__':
         #colored_camera_dicts = [([1, 0, 0], train_cam_norm_dict)]
 
     if True:
-        dataname = 'perfume4'
+        dataname = 'perfume3_all'
         base_dir = f'/home/lir0b/Code/NeuralRep/NIR-3Drec/data_nir_all/{dataname}'
         #train_cam_dict = json.load(open(os.path.join(base_dir, 'cam_dict.json')))
         #train_cam_norm_dict = json.load(open(os.path.join(base_dir, 'cam_dict_norm.json')))
@@ -137,12 +137,13 @@ if __name__ == '__main__':
         #train_cam_0 = json.load(open(os.path.join(dir0, 'cam_dict_norm.json')))
         #train_cam_1 = json.load(open(os.path.join(dir1, 'cam_dict_norm.json')))
 
-        train_cam_0 = json.load(open(os.path.join(base_dir, 'cam_dict.json')))
+        #train_cam_0 = json.load(open(os.path.join(base_dir, 'cam_dict.json')))
         train_cam_1 = json.load(open(os.path.join(base_dir, 'cam_dict_norm.json')))
 
         # colored_camera_dicts = [([0, 1, 0], train_cam_dict), ([1, 0, 0], train_cam_norm_dict)]
         #colored_camera_dicts = [([1, 0, 0], train_cam_norm_dict), ([0, 1, 0], train_cam_dict)]
-        colored_camera_dicts = [([1, 0, 0], train_cam_0), ([0, 1, 0], train_cam_1)]
+        #colored_camera_dicts = [([1, 0, 0], train_cam_0), ([0, 1, 0], train_cam_1)]
+        colored_camera_dicts = [([1, 0, 0], train_cam_1)]
         #pprint(train_cam_dict)
         #print(len(train_cam_norm_dict))
 
