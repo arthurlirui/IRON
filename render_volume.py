@@ -85,32 +85,38 @@ class Runner:
         self.nir_nerf_outside = NeRF(**self.conf["model.nerf"]).to(self.device)
         self.sdf_network = SDFNetwork(**self.conf["model.sdf_network"]).to(self.device)
         self.deviation_network = SingleVarianceNetwork(**self.conf["model.variance_network"]).to(self.device)
-        self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
-        self.nir_network = RenderingNetwork(**self.conf["model.nir_network"]).to(self.device)
+        if self.dataset.enable_RGB:
+            self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
+        if self.dataset.enable_NIR:
+            self.nir_network = RenderingNetwork(**self.conf["model.nir_network"]).to(self.device)
         params_to_train += list(self.nerf_outside.parameters())
         params_to_train += list(self.sdf_network.parameters())
         params_to_train += list(self.deviation_network.parameters())
-        params_to_train += list(self.color_network.parameters())
-        params_to_train += list(self.nir_nerf_outside.parameters())
-        params_to_train += list(self.nir_network.parameters())
+        if self.dataset.enable_RGB:
+            params_to_train += list(self.color_network.parameters())
+        if self.dataset.enable_NIR:
+            params_to_train += list(self.nir_nerf_outside.parameters())
+            params_to_train += list(self.nir_network.parameters())
 
         self.optimizer = torch.optim.Adam(params_to_train, lr=self.learning_rate)
 
-        self.renderer = NeuSRenderer(
-            self.nerf_outside,
-            self.sdf_network,
-            self.deviation_network,
-            self.color_network,
-            **self.conf["model.neus_renderer"]
-        )
+        if self.dataset.enable_RGB:
+            self.renderer = NeuSRenderer(
+                self.nerf_outside,
+                self.sdf_network,
+                self.deviation_network,
+                self.color_network,
+                **self.conf["model.neus_renderer"]
+            )
 
-        self.renderer_nir = NeuSRenderer(
-            self.nir_nerf_outside,
-            self.sdf_network,
-            self.deviation_network,
-            self.nir_network,
-            **self.conf["model.neus_renderer"]
-        )
+        if self.dataset.enable_NIR:
+            self.renderer_nir = NeuSRenderer(
+                self.nir_nerf_outside,
+                self.sdf_network,
+                self.deviation_network,
+                self.nir_network,
+                **self.conf["model.neus_renderer"]
+            )
 
         # Load checkpoint
         latest_model_name = None
@@ -228,11 +234,10 @@ class Runner:
         image_perm = torch.randperm(self.dataset.n_RGB)
 
         for iter_i in tqdm(range(res_step)):
-            data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)],
-                                                   self.batch_size, data_type='rgb')
+            data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size, data_type='rgb')
 
             rays_o, rays_d, true_rgb, mask = (data[:, 0:3], data[:, 3:6], data[:, 6:9], data[:, 9:10])
-            near, far = self.dataset.near_far_from_sphere(rays_o, rays_d)
+            near, far = self.dataset.near_far_from_sphere(rays_o, rays_d, scale=0.2)
 
             background_rgb = None
             background_nir = None
@@ -608,7 +613,7 @@ class Runner:
         out_normal_fine = []
 
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
-            near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch)
+            near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch, self.dataset.scale)
             #background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
 
             if data_type == 'nir':
@@ -835,12 +840,14 @@ if __name__ == "__main__":
         #runner.train()
         conf_filename = os.path.basename(args.conf)
         if conf_filename == 'nirrgb.conf':
-            #runner.train_NIR()
-            runner.train_RGB()
+            #runner.train_RGB()
+            runner.train_NIR()
         #runner.train_NIRRGB(data_type='rgb')
         elif os.path.basename(args.conf) == 'nir.conf':
             runner.train_NIRRGB(data_type='nir')
         elif os.path.basename(args.conf) == 'flash_rgb_real.conf':
+            runner.train_NIRRGB(data_type='rgb')
+        elif os.path.basename(args.conf) == 'rgb_mask.conf':
             runner.train_NIRRGB(data_type='rgb')
         else:
             runner.train_NIRRGB(data_type='rgb')

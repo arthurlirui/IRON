@@ -28,7 +28,7 @@ from models.rendering_func import get_materials_multi, get_materials, get_materi
 
 import kornia
 from models.dataset import image_reader, image_writer, exr_writer, exr_reader
-from models.dataset import to8b, load_dataset_NIRRGB, load_datadir
+from models.dataset import to8b, load_dataset_NIRRGB, load_datadir, load_dataset_NIRRGB_alignRGB
 
 from models.helper import gamma_correction, inv_gamma_correction
 from models.dataset import image_writer, image_reader
@@ -275,7 +275,7 @@ pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 #RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, folder_name='nir')
-image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB(args.data_dir, args.folder_name, 'cam_dict_norm.json')
+image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB_alignRGB(args.data_dir, args.folder_name, 'cam_dict.json')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 cameras = [
     Camera(W=gt_images[i].shape[1], H=gt_images[i].shape[0], K=Ks[i].cuda(), W2C=W2Cs[i].cuda()) for i in range(gt_images.shape[0])
@@ -309,7 +309,14 @@ if len(ckpt_fpaths) > 0:
     ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
     sdf_network.load_state_dict(ckpt["sdf_network"])
     for x in list(color_network_dict.keys()):
-        color_network_dict[x].load_state_dict(ckpt[x])
+        if x in ckpt:
+            #try:
+            print(x)
+            color_network_dict[x].load_state_dict(ckpt[x])
+            #except:
+                #print(x)
+                #print(color_network_dict[x])
+                #print(ckpt[x])
     # logim_names = [os.path.basename(x) for x in glob.glob(os.path.join(args.out_dir, "logim_*.png"))]
     # start_step = sorted([int(x[len("logim_") : -4]) for x in logim_names])[-1]
 ic(dist, color_network_dict["point_light_network"].light.data)
@@ -527,7 +534,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     for x in color_optimizer_dict.keys():
         color_optimizer_dict[x].step()
 
-    if global_step % 50 == 0:
+    if global_step % 500 == 0:
         writer.add_scalar("loss/loss", loss, global_step)
         writer.add_scalar("loss/img_loss", img_loss, global_step)
         writer.add_scalar("loss/img_l2_loss", img_l2_loss, global_step)
@@ -548,7 +555,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             os.path.join(args.out_dir, f"ckpt_{global_step}.pth"),
         )
 
-    if global_step % 10 == 0:
+    if global_step % 100 == 0:
         ic(
             args.out_dir,
             global_step,

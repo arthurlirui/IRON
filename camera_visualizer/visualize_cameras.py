@@ -1,6 +1,7 @@
 import open3d as o3d
 import json
 import numpy as np
+from pprint import pprint
 
 
 def get_camera_frustum(img_size, K, W2C, frustum_length=0.5, color=[0., 1., 0.]):
@@ -108,7 +109,6 @@ if __name__ == '__main__':
         #colored_camera_dicts = [([0, 1, 0], train_cam_dict), ([1, 0, 0], train_cam_norm_dict)]
         colored_camera_dicts = [([1, 0, 0], train_cam_norm_dict)]
 
-
     if False:
         dataname = 'xmen'
         base_dir = f'/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/IRON/data_flashlight_real/{dataname}'
@@ -127,13 +127,23 @@ if __name__ == '__main__':
         #colored_camera_dicts = [([1, 0, 0], train_cam_norm_dict)]
 
     if True:
-        dataname = 'deer3'
-        base_dir = f'/home/lir0b/Code/NeuralRep/NIR-3Drec/data_nir_all/{dataname}/train/'
-        train_cam_dict = json.load(open(os.path.join(base_dir, 'cam_dict_norm.json')))
-        #train_cam_norm_dict = json.load(open(os.path.join(base_dir, 'cam_dict_norm_nerf.json')))
+        dataname = 'perfume4'
+        base_dir = f'/home/lir0b/Code/NeuralRep/NIR-3Drec/data_nir_all/{dataname}'
+        #train_cam_dict = json.load(open(os.path.join(base_dir, 'cam_dict.json')))
+        #train_cam_norm_dict = json.load(open(os.path.join(base_dir, 'cam_dict_norm.json')))
+
+        #dir0 = os.path.join(base_dir, 'train', 'rgb')
+        #dir1 = os.path.join(base_dir, 'train', 'nir')
+        #train_cam_0 = json.load(open(os.path.join(dir0, 'cam_dict_norm.json')))
+        #train_cam_1 = json.load(open(os.path.join(dir1, 'cam_dict_norm.json')))
+
+        train_cam_0 = json.load(open(os.path.join(base_dir, 'cam_dict.json')))
+        train_cam_1 = json.load(open(os.path.join(base_dir, 'cam_dict_norm.json')))
+
         # colored_camera_dicts = [([0, 1, 0], train_cam_dict), ([1, 0, 0], train_cam_norm_dict)]
         #colored_camera_dicts = [([1, 0, 0], train_cam_norm_dict), ([0, 1, 0], train_cam_dict)]
-        colored_camera_dicts = [([1, 0, 0], train_cam_dict)]
+        colored_camera_dicts = [([1, 0, 0], train_cam_0), ([0, 1, 0], train_cam_1)]
+        #pprint(train_cam_dict)
         #print(len(train_cam_norm_dict))
 
     if False:
@@ -152,7 +162,7 @@ if __name__ == '__main__':
     #test_cam_dict = json.load(open(os.path.join(base_dir, 'images/work_video_flash/cam_dict_norm.json')))
     #path_cam_dict = json.load(open(os.path.join(base_dir, 'camera_path/cam_dict_norm.json')))
     #path_cam_dict = json.load(open(os.path.join(base_dir, 'images/work_video_flash/cam_dict_norm.json')))
-    camera_size = 0.05
+    camera_size = 0.1
     # colored_camera_dicts = [([0, 1, 0], train_cam_dict),
     #                         ([0, 0, 1], test_cam_dict),
     #                         ([1, 1, 0], path_cam_dict)]
@@ -162,9 +172,11 @@ if __name__ == '__main__':
 
     #geometry_file = os.path.join(base_dir, 'work', 'mvs', 'mesh_norm.ply')
     #geometry_file = os.path.join(base_dir, 'work', 'mvs', 'meshed_trim_3.ply')
-    geometry_file = None
+    geometry_file = os.path.join('/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/IRON/data_nir_all/deer3/mvs/meshed_trim_3.ply')
     #geometry_file = os.path.join(base_dir, 'meshed_trim_3.ply')
     #geometry_type = 'mesh'
+    geometry_type = 'mesh'
+    geometry_file = None
     geometry_type = None
 
     visualize_cameras(colored_camera_dicts,

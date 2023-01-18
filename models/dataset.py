@@ -401,16 +401,21 @@ class DatasetNIRRGB:
         #         cam_dict_list.append(nir_camera_dict)
         if True:
             self.camera_dict = None
-            if os.path.exists(os.path.join(self.data_dir, 'cam_dict_norm.json')):
-                with open(os.path.join(self.data_dir, 'cam_dict_norm.json')) as f:
+            cam_dict_filename = 'cam_dict_norm.json'
+            if os.path.exists(os.path.join(self.data_dir, cam_dict_filename)):
+                with open(os.path.join(self.data_dir, cam_dict_filename)) as f:
                     camera_dict = json.load(fp=f)
                     #cam_dict_list.extend(camera_dict)
                     self.camera_dict = camera_dict
                 # check non-exist files and remove empty keys
         use_trans = False
+        self.scale = 1.0
         if use_trans:
             target_radius = 1.0
             translate, scale = get_tf_cams(self.camera_dict, target_radius=target_radius)
+            self.translate = translate
+            self.scale = scale
+            print('scale:', scale, 'translate:', translate)
 
         for x in list(self.camera_dict.keys()):
             if os.path.exists(os.path.join(self.data_rgb_dir, x)) or os.path.exists(os.path.join(self.data_nir_dir, x)):
@@ -434,7 +439,8 @@ class DatasetNIRRGB:
         self.enable_NIR = False
         if os.path.exists(self.data_rgb_dir):
             try:
-                self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, f'*.{self.file_type}')))
+                #self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, f'*.{self.file_type}')))
+                self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, f'*.*')))
                 self.RGB_list = [f for f in self.RGB_list if os.path.basename(f) in self.camera_dict]
                 self.n_RGB = len(self.RGB_list)
                 self.RGB_np = np.stack([self.image_reader(im_name) for im_name in self.RGB_list]) / 255.0
@@ -454,7 +460,8 @@ class DatasetNIRRGB:
         # load NIR images
         if os.path.exists(self.data_nir_dir):
             try:
-                self.NIR_list = sorted(glob.glob(os.path.join(self.data_nir_dir, f'*.{self.file_type}')))
+                #self.NIR_list = sorted(glob.glob(os.path.join(self.data_nir_dir, f'*.{self.file_type}')))
+                self.NIR_list = sorted(glob.glob(os.path.join(self.data_nir_dir, f'*.*')))
                 self.NIR_list = [f for f in self.NIR_list if os.path.basename(f) in self.camera_dict]
                 self.n_NIR = len(self.NIR_list)
                 self.NIR_np = np.stack([self.image_reader(im_name) for im_name in self.NIR_list]) / 255.0
@@ -471,7 +478,7 @@ class DatasetNIRRGB:
             self.n_NIR = 0
             self.NIR_np = None
 
-        no_mask = True
+        no_mask = False
         if no_mask:
             print("Not using masks")
             self.masks_lis = None
@@ -481,13 +488,20 @@ class DatasetNIRRGB:
                 self.masks_NIR_np = np.ones_like(self.NIR_np)
         else:
             try:
-                self.masks_lis = sorted(glob.glob(os.path.join(self.data_dir, 'mask', f'*.{self.file_type}')))
-                self.masks_np = np.stack([cv2.imread(im_name) for im_name in self.masks_lis]) / 255.0
+                if self.enable_RGB:
+                    self.masks_RGB_lis = sorted(glob.glob(os.path.join(self.data_dir, 'masks_rgb', f'*.{self.file_type}')))
+                    self.masks_RGB_np = np.stack([self.image_reader(im_name) for im_name in self.masks_RGB_lis]) / 255.0
+                if self.enable_NIR:
+                    self.masks_NIR_lis = sorted(glob.glob(os.path.join(self.data_dir, 'masks_nir', f'*.{self.file_type}')))
+                    self.masks_NIR_np = np.stack([self.image_reader(im_name) for im_name in self.masks_NIR_lis]) / 255.0
+                #self.masks_np = np.stack([cv2.imread(im_name) for im_name in self.masks_lis]) / 255.0
             except:
                 # traceback.print_exc()
                 print("Loading mask images failed; try not using masks")
                 self.masks_lis = None
                 self.masks_np = np.ones_like(self.RGB_np)
+                self.masks_RGB_np = np.ones_like(self.RGB_np)
+                self.masks_NIR_np = np.ones_like(self.NIR_np)
 
         if self.enable_RGB:
             self.RGB_np = self.RGB_np[..., :3]
@@ -739,12 +753,13 @@ class DatasetNIRRGB:
         rays_o = trans[None, None, :3].expand(rays_v.shape)  # W, H, 3
         return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
 
-    def near_far_from_sphere(self, rays_o, rays_d):
+    def near_far_from_sphere(self, rays_o, rays_d, scale=1.0):
         a = torch.sum(rays_d ** 2, dim=-1, keepdim=True)
         b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
         mid = 0.5 * (-b) / a
-        near = mid - 1.0
-        far = mid + 1.0
+        halfdist = 1.0 / (scale + 0.0001)
+        near = mid - 1.0 * halfdist
+        far = mid + 1.0 * halfdist
         return near, far
 
     def image_at(self, idx, resolution_level, data_type='rgb'):
@@ -770,6 +785,66 @@ class DatasetNIRRGB:
 ###### load dataset
 def to8b(x):
     return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)
+
+
+def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_dict.json'):
+    parpath = os.path.dirname(datadir)
+    rgbpath = os.path.join(parpath, 'rgb')
+    nirpath = os.path.join(parpath, 'nir')
+    imglist = glob.glob(os.path.join(datadir, folder_name, '*.*'))
+    with open(os.path.join(datadir, file_name)) as f:
+        cam_dict = json.load(f)
+
+    use_trans = True
+    if use_trans:
+        target_radius = 1.0
+        with open(os.path.join(rgbpath, file_name)) as f:
+            rgb_cam_dict = json.load(f)
+        with open(os.path.join(nirpath, file_name)) as f:
+            nir_cam_dict = json.load(f)
+        translate, scale = get_tf_cams(rgb_cam_dict, target_radius=target_radius)
+
+    image_fpaths = []
+    gt_images = []
+    Ks = []
+    W2Cs = []
+    #imgtype = 'png'
+    imreader = None
+    imwriter = None
+
+    if len(imglist) > 0:
+        x = imglist[0]
+        if x.endswith('png') or x.endswith('jpg'):
+            imreader = image_reader('imageio')
+            imwriter = image_writer('imageio')
+        if x.endswith('exr'):
+            imreader = exr_reader('pyexr')
+            imwriter = image_writer('pyexr')
+
+    # load file from folder image
+    for x in imglist:
+        filename = os.path.basename(x)
+        if filename.endswith('png') or filename.endswith('jpg'):
+            im = imreader(x)/255.0
+        if filename.endswith('exr'):
+            im = imreader(x)
+        fpath = x
+        if not filename in cam_dict:
+            continue
+        K = np.array(cam_dict[filename]["K"]).reshape((4, 4)).astype(np.float32)
+        W2C = np.array(cam_dict[filename]["W2C"]).reshape((4, 4)).astype(np.float32)
+
+        if use_trans:
+            W2C = transform_pose(W2C, translate, scale)
+
+        image_fpaths.append(fpath)
+        gt_images.append(torch.from_numpy(im))
+        Ks.append(torch.from_numpy(K))
+        W2Cs.append(torch.from_numpy(W2C))
+    gt_images = torch.stack(gt_images, dim=0)
+    Ks = torch.stack(Ks, dim=0)
+    W2Cs = torch.stack(W2Cs, dim=0)
+    return image_fpaths, gt_images, Ks, W2Cs
 
 
 def load_dataset_NIRRGB(datadir, folder_name='rgb', file_name='cam_dict_norm.json'):

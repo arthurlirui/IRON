@@ -550,9 +550,9 @@ class CompositeRenderer(nn.Module):
             k_name = os.path.basename(kpath).split('.')[0]
             self.MATERIAL_K[k_name] = torch.from_numpy(np.loadtxt(kpath))
 
-        print(self.MATERIAL_ETA)
-        print(self.MATERIAL_K)
-        print(self.get_eta(), self.get_K())
+        #print(self.MATERIAL_ETA)
+        #print(self.MATERIAL_K)
+        print('eta:', self.get_eta(), 'K:', self.get_K())
 
         if use_cuda:
             self.MTS_TRANS = self.MTS_TRANS.cuda()
