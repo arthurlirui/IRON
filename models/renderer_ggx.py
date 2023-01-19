@@ -79,7 +79,7 @@ class GGXColocatedRenderer(nn.Module):
             self.MTS_TRANS = self.MTS_TRANS.cuda()
             self.MTS_DIFF_TRANS = self.MTS_DIFF_TRANS.cuda()
 
-    def forward(self, light, distance, normal, viewdir, diffuse_albedo, specular_albedo, alpha):
+    def forward(self, light, distance, normal, viewdir, params={}):
         """
         light:
         distance: [..., 1]
@@ -87,6 +87,9 @@ class GGXColocatedRenderer(nn.Module):
         diffuse_albedo, specular_albedo: [..., 3]
         alpha: [..., 1]; roughness
         """
+        diffuse_albedo = params['diffuse_albedo']
+        specular_albedo = params['specular_albedo']
+        alpha = params['specular_roughness']
         # decay light according to squared-distance falloff
         light_intensity = light / (distance * distance + 1e-10)
 
@@ -626,11 +629,11 @@ class CompositeRenderer(nn.Module):
         F = fresnel_dielectric(cos_theta, cos_theta, eta)
         return F
 
-    def main_metallic_reflection(self, cos_theta, eta, k, specular_albedo):
+    def main_metallic_reflection(self, cos_theta, eta, k, specular_albedo=1.0):
         F = self.metallic_reflection(cos_theta, eta, k)
         return specular_albedo * F
 
-    def main_dielectric_reflection(self, D, G, cos_theta, eta, specular_albedo):
+    def main_dielectric_reflection(self, D, G, cos_theta, eta, specular_albedo=1.0):
         F = self.dielectric_reflection(cos_theta, eta)
         return specular_albedo * F * D * G / (4.0 * torch.abs(cos_theta))
 
@@ -803,8 +806,8 @@ class CompositeRenderer(nn.Module):
         roughness = torch.clamp(params['specular_roughness'], min=0.00001)
         #flatness = torch.clamp(params['flatness'], min=0.00001)
         #spec_trans = torch.clamp(params['spec_trans'], min=0.00001)
-        metallic = torch.clamp(params['metallic'], min=0.00001)
-        dielectric = torch.clamp(params['dielectric'], min=0.00001)
+        metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
+        dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
         #clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
         #eta = torch.clamp(params['eta'], min=0.000001)
         eta = 1.48958738

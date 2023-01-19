@@ -787,11 +787,16 @@ def to8b(x):
     return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)
 
 
-def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_dict.json'):
+def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_dict.json', use_mask=True):
     parpath = os.path.dirname(datadir)
     rgbpath = os.path.join(parpath, 'rgb')
     nirpath = os.path.join(parpath, 'nir')
-    imglist = glob.glob(os.path.join(datadir, folder_name, '*.*'))
+    imglist = sorted(glob.glob(os.path.join(datadir, folder_name, '*.*')))
+
+    if use_mask:
+        maskpath = os.path.join(datadir, 'masks')
+        if os.path.exists(maskpath):
+            masklist = sorted(glob.glob(os.path.join(maskpath, '*.*')))
     with open(os.path.join(parpath, file_name)) as f:
         cam_dict = json.load(f)
 
@@ -806,6 +811,7 @@ def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_d
 
     image_fpaths = []
     gt_images = []
+    mask_images = []
     Ks = []
     W2Cs = []
     #imgtype = 'png'
@@ -815,20 +821,25 @@ def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_d
     if len(imglist) > 0:
         x = imglist[0]
         if x.endswith('png') or x.endswith('jpg'):
-            imreader = image_reader('imageio')
-            imwriter = image_writer('imageio')
+            imreader = image_reader('opencv')
+            imwriter = image_writer('opencv')
         if x.endswith('exr'):
             imreader = exr_reader('pyexr')
             imwriter = image_writer('pyexr')
 
     # load file from folder image
-    for x in imglist:
+    for i, x in enumerate(imglist):
         filename = os.path.basename(x)
         if filename.endswith('png') or filename.endswith('jpg'):
             im = imreader(x)/255.0
         if filename.endswith('exr'):
             im = imreader(x)
         fpath = x
+
+        if use_mask:
+            maski = imreader(masklist[i])/255.0
+            im[maski < 0.1] = 0
+
         if not filename in cam_dict:
             continue
         K = np.array(cam_dict[filename]["K"]).reshape((4, 4)).astype(np.float32)

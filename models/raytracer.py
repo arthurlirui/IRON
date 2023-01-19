@@ -776,7 +776,7 @@ def render_camera(
     raytracer,
     color_network_dict,
     render_fn,
-    fill_holes=True,
+    fill_holes=False,
     handle_edges=True,
     is_training=False,
 ):

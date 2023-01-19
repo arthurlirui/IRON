@@ -2,14 +2,13 @@ import os
 import torch
 
 ###### rendering functions
-def get_materials(color_network_dict, points, normals, features, is_metal=False):
-    diffuse_albedo = color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[
-        ..., [2, 1, 0]
-    ]
-    specular_albedo = color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
+def get_materials(network_dict, points, normals, features, is_metal=False):
+    #diffuse_albedo = network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[..., [2, 1, 0]]
+    diffuse_albedo = network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
+    specular_albedo = network_dict["specular_albedo_network"](points, normals, None, features).abs()
     if not is_metal:
         specular_albedo = torch.mean(specular_albedo, dim=-1, keepdim=True).expand_as(specular_albedo)
-    specular_roughness = color_network_dict["specular_roughness_network"](points, normals, None, features).abs() + 0.01
+    specular_roughness = network_dict["specular_roughness_network"](points, normals, None, features).abs() + 0.01
     res = {}
     res['diffuse_albedo'] = diffuse_albedo
     res['specular_albedo'] = specular_albedo
@@ -19,7 +18,8 @@ def get_materials(color_network_dict, points, normals, features, is_metal=False)
 
 def get_materials_comp(network_dict, points, normals, features):
     res = {}
-    diffuse_albedo = network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[..., [2, 1, 0]]
+    #diffuse_albedo = network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[..., [2, 1, 0]]
+    diffuse_albedo = network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
     specular_albedo = network_dict["specular_albedo_network"](points, normals, None, features).abs()
     #clearcoat = network_dict["clearcoat_network"](points, normals, None, features).abs()
     metallic = network_dict["metallic_network"](points, normals, None, features).abs()
@@ -40,9 +40,8 @@ def get_materials_comp(network_dict, points, normals, features):
     return res
 
 def get_materials_multi(color_network_dict, points, normals, features, is_metal=False):
-    diffuse_albedo = color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[
-        ..., [2, 1, 0]
-    ]
+    #diffuse_albedo = color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()[..., [2, 1, 0]]
+    diffuse_albedo = color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
     specular_albedo = color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
     #if not is_metal:
     #    specular_albedo = torch.mean(specular_albedo, dim=-1, keepdim=True).expand_as(specular_albedo)

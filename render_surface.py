@@ -93,57 +93,48 @@ color_network_dict = init_rendering_network_dict(renderer_name=renderer_name)
 sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
 color_optimizer_dict = choose_optmizer(renderer_name=renderer_name, network_dict=color_network_dict)
 renderer = choose_renderer(renderer_name=renderer_name)
-#render_fn = choose_renderer_func(renderer_name=renderer_name, device=device)
 
-# use_ggx = False
-# use_multi = False
-# use_comp = True
-# if use_multi:
-#     color_optimizer_dict = {
-#         "color_network": torch.optim.Adam(color_network_dict["color_network"].parameters(), lr=1e-4),
-#         "diffuse_albedo_network": torch.optim.Adam(color_network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
-#         "specular_albedo_network": torch.optim.Adam(color_network_dict["specular_albedo_network"].parameters(), lr=1e-4),
-#         "specular_roughness_network": torch.optim.Adam(color_network_dict["specular_roughness_network"].parameters(), lr=1e-4),
-#         "material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-4),
-#         "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
-#     }
-#
-# if use_comp:
-#     color_optimizer_dict = {
-#         "color_network": torch.optim.Adam(color_network_dict["color_network"].parameters(), lr=1e-4),
-#         "diffuse_albedo_network": torch.optim.Adam(color_network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
-#         "specular_albedo_network": torch.optim.Adam(color_network_dict["specular_albedo_network"].parameters(), lr=1e-4),
-#         "specular_roughness_network": torch.optim.Adam(color_network_dict["specular_roughness_network"].parameters(), lr=1e-4),
-#         #"material_network": torch.optim.Adam(color_network_dict["material_network"].parameters(), lr=1e-4),
-#         "point_light_network": torch.optim.Adam(color_network_dict["point_light_network"].parameters(), lr=1e-2),
-#         "clearcoat_network": torch.optim.Adam(color_network_dict["clearcoat_network"].parameters(), lr=1e-4),
-#         "metallic_network": torch.optim.Adam(color_network_dict["metallic_network"].parameters(), lr=1e-4),
-#         "dielectric_network": torch.optim.Adam(color_network_dict["dielectric_network"].parameters(), lr=1e-4),
-#         "spec_tint_network": torch.optim.Adam(color_network_dict["spec_tint_network"].parameters(), lr=1e-4),
-#         "anisotropic_ntwork": torch.optim.Adam(color_network_dict["anisotropic_ntwork"].parameters(), lr=1e-4)
-#     }
 
-# if use_ggx:
-#     ggx_renderer = GGXColocatedRenderer(use_cuda=True)
-#
-# if use_multi:
-#     rough_plastic_renderer = RoughPlasticCoLocRenderer(use_cuda=True)
-#     dielectric_renderer = SmoothDielectricRenderer(use_cuda=True)
-#     #thin_dielectric_renderer = ThinDielectricRenderer(use_cuda=True)
-#     ior_path = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/mitsuba-data/ior'
-#     conductor_renderer = SmoothConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
-#     rough_conductor_renderer = RoughConductorCoLocRenderer(ior_path=ior_path, use_cuda=True)
-#
-#     full_renderer = CoLocRenderer(rough_plastic=rough_plastic_renderer,
-#                                   dielectric=dielectric_renderer,
-#                                   smooth_conductor=conductor_renderer,
-#                                   conductor=rough_conductor_renderer, use_cuda=True)
-#     #render_eqn = full_renderer
-#
-# if use_comp:
-#     comp_renderer = CompositeRenderer(use_cuda=True)
-#     #render_eqn = render_fn_comp
+def render_fn(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
+    dots_sh = list(interior_mask.shape)
+    rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
+    diffuse_rgb = rgb.clone()
+    specular_rgb = rgb.clone()
+    diffuse_albedo = rgb.clone()
+    specular_albedo = rgb.clone()
+    specular_roughness = rgb[..., 0].clone()
+    normals_pad = rgb.clone()
+    if interior_mask.any():
+        normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
+        #interior_diffuse_albedo, interior_specular_albedo, interior_specular_roughness = get_materials(color_network_dict, points, normals, features)
+        params = get_materials(network_dict=color_network_dict,
+                               points=points,
+                               normals=normals,
+                               features=features)
+        results = renderer(
+            color_network_dict["point_light_network"](),
+            (points - ray_o).norm(dim=-1, keepdim=True),
+            normals,
+            -ray_d,
+            params=params
+        )
+        rgb[interior_mask] = results["rgb"]
+        diffuse_rgb[interior_mask] = results["diffuse_rgb"]
+        specular_rgb[interior_mask] = results["specular_rgb"]
+        diffuse_albedo[interior_mask] = params['diffuse_albedo']
+        specular_albedo[interior_mask] = params['specular_albedo']
+        specular_roughness[interior_mask] = params['specular_roughness'].squeeze(-1)
+        normals_pad[interior_mask] = normals
 
+    return {
+        "color": rgb,
+        "diffuse_color": diffuse_rgb,
+        "specular_color": specular_rgb,
+        "diffuse_albedo": diffuse_albedo,
+        "specular_albedo": specular_albedo,
+        "specular_roughness": specular_roughness,
+        "normal": normals_pad,
+    }
 
 def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
     # rendering by using composite models
@@ -209,7 +200,13 @@ def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, norm
         #"spec_tint": spec_tint
     }
 
-render_fn = render_fn_comp
+if renderer_name == 'comp':
+    render_fn = render_fn_comp
+elif renderer_name == 'ggx':
+    render_fn = render_fn
+else:
+    render_fn = render_fn
+
 #
 #
 # def render_fn_exp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
@@ -276,11 +273,16 @@ pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
 #RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, folder_name='nir')
 image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB_alignRGB(args.data_dir, args.folder_name, 'cam_dict_norm.json')
+for ipath in image_fpaths:
+    print(ipath)
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 cameras = [
     Camera(W=gt_images[i].shape[1], H=gt_images[i].shape[0], K=Ks[i].cuda(), W2C=W2Cs[i].cuda()) for i in range(gt_images.shape[0])
 ]
 ic(len(image_fpaths), gt_images.shape, Ks.shape, W2Cs.shape, len(cameras))
+
+imreader = image_reader('opencv')
+imwriter = image_writer('opencv')
 
 ###### initialization using neus
 ic(args.neus_ckpt_fpath)
@@ -310,13 +312,8 @@ if len(ckpt_fpaths) > 0:
     sdf_network.load_state_dict(ckpt["sdf_network"])
     for x in list(color_network_dict.keys()):
         if x in ckpt:
-            #try:
             print(x)
             color_network_dict[x].load_state_dict(ckpt[x])
-            #except:
-                #print(x)
-                #print(color_network_dict[x])
-                #print(ckpt[x])
     # logim_names = [os.path.basename(x) for x in glob.glob(os.path.join(args.out_dir, "logim_*.png"))]
     # start_step = sorted([int(x[len("logim_") : -4]) for x in logim_names])[-1]
 ic(dist, color_network_dict["point_light_network"].light.data)
@@ -396,8 +393,8 @@ if args.render_all:
             is_training=False,
         )
         if args.gamma_pred:
-            results["color"] = gamma_correction(results["color"], g=2.2)
-            results["diffuse_color"] = gamma_correction(results["diffuse_color"], g=2.2)
+            results["color"] = gamma_correction(results["color"], gamma=2.2)
+            results["diffuse_color"] = gamma_correction(results["diffuse_color"], gamma=2.2)
             #results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
             #results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
             results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
@@ -405,20 +402,24 @@ if args.render_all:
             results[x] = results[x].detach().cpu().numpy()
         color_im = results["color"]
         timgname = os.path.basename(impath).split('.')[0]
-        imageio.imwrite(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
+        #imageio.imwrite(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
+        imwriter(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
 
         normal = results["normal"]
         normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
         normal_im = (normal + 1.0) / 2.0
-        imageio.imwrite(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
+        #imageio.imwrite(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
+        imwriter(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
         diff_im = results["diffuse_color"]
-        imageio.imwrite(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
+        #imageio.imwrite(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
+        imwriter(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
         specular_im = results["specular_color"]
-        imageio.imwrite(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
+        #imageio.imwrite(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
+        imwriter(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
     exit(0)
 
 ###### training
-fill_holes = False
+fill_holes = True
 handle_edges = not args.no_edgesample
 is_training = True
 if args.inv_gamma_gt:
@@ -472,6 +473,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     img_ssim_loss = torch.Tensor([0.0]).cuda()
     roughrange_loss = torch.Tensor([0.0]).cuda()
     metallicness_loss = torch.Tensor([0.0]).cuda()
+    dielectricness_loss = torch.Tensor([0.0]).cuda()
     material_type_loss = torch.Tensor([0.0]).cuda()
     material_sparse_loss = torch.Tensor([0.0]).cuda()
 
@@ -481,7 +483,6 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     eik_loss = ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
 
     #dy, dx = image_gradients(f)
-
     #sparse_loss = dy.norm(1, dim=-1)+dx.norm(1, dim=-1)
     #out_gradient = kornia.filters.spatial_gradient(f.permute(2, 0, 1).unsqueeze(0), mode='sobel', order=1, normalized=True)
     #print(out_gradient.shape, f.shape)
@@ -510,9 +511,16 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         if roughness.numel() > 0:
             roughrange_loss = (roughness - 0.5).mean() * args.roughrange_weight
 
-        metallicness = results["metallic"][mask]
-        metallicness_loss = (torch.abs(metallicness - 0.1)).mean() * 0.1
-        #metallicness = metallicness[metallicness > 0.0001]
+        if 'metallic' in results:
+            metallicness = results["metallic"][mask]
+            metallicness = metallicness[metallicness > 0.5]
+            metallicness_loss = (torch.abs(metallicness - 0.5)).mean()
+
+        if 'dielectric' in results:
+            dielectricness = results['dielectric'][mask]
+            dielectricness = dielectricness[dielectricness > 0.5]
+            dielectricness_loss = (torch.abs(dielectricness - 0.5)).mean()
+            #metallicness = metallicness[metallicness > 0.0001]
         #if metallicness.numel() > 0:
         #    metallicness_loss = (metallicness - 0.5).mean() * args.roughrange_weight
 
@@ -524,9 +532,11 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     eik_loss = eik_loss / eik_cnt * args.eik_weight
 
     if renderer_name == 'multi':
-        loss = img_loss + eik_loss + roughrange_loss + 0.0 * sparse_loss + 0.0 * material_type_loss + 50.0 * material_sparse_loss
+        loss = img_loss + eik_loss + roughrange_loss + 0.0 * material_type_loss + 50.0 * material_sparse_loss
     if renderer_name == 'comp':
-        loss = img_loss + eik_loss + roughrange_loss + metallicness_loss
+        loss = img_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
+    if renderer_name == 'ggx':
+        loss = img_loss + eik_loss + roughrange_loss
     #loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + material_type_loss
 
     loss.backward()
@@ -542,6 +552,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         writer.add_scalar("loss/eik_loss", eik_loss, global_step)
         writer.add_scalar("loss/roughrange_loss", roughrange_loss, global_step)
         writer.add_scalar("loss/metallicness_loss", metallicness_loss, global_step)
+        writer.add_scalar("loss/dielectricness_loss", dielectricness_loss, global_step)
         #writer.add_scalar("loss/sparse_loss", sparse_loss, global_step)
         #writer.add_scalar("loss/material_type_loss", material_type_loss, global_step)
         #writer.add_scalar("loss/material_spare_loss", material_type_loss, global_step)
@@ -566,6 +577,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             eik_loss.item(),
             roughrange_loss.item(),
             metallicness_loss.item(),
+            dielectricness_loss.item(),
             color_network_dict["point_light_network"].get_light().item(),
         )
 
@@ -638,8 +650,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
 
         if renderer_name == 'comp':
             #clearcoat_map = results['clearcoat']
-            metallic_rgb = results['metallic_rgb']
-            dielectric_rgb = results['dielectric_rgb']
+            metallic_rgb = np.log(results['metallic'])
+            dielectric_rgb = np.log(results['dielectric'])
             #spec_tint_map = results['spec_tint_rgb']
 
         if args.inv_gamma_gt:
@@ -688,6 +700,10 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         #im = np.concatenate((row1, row2, row3, row4), axis=0)
 
         from models.helper import concatenate_result
+        if renderer_name == 'ggx':
+            img_list = [gt_color_im, normal_im, edge_mask_im,
+                        color_im, diffuse_color_im, specular_color_im,
+                        diffuse_albedo_im, specular_albedo_im, specular_roughness_im]
         if renderer_name == 'multi':
             img_list = [gt_color_im, normal_im, edge_mask_im,
                         color_im, diffuse_color_im, specular_color_im,
@@ -698,7 +714,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
                         color_im, diffuse_color_im, specular_color_im,
                         metallic_rgb, dielectric_rgb, specular_roughness_im]
         im = concatenate_result(image_list=img_list, imarray_length=3)
-        imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))
+        #imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))
+        imwriter(os.path.join(args.out_dir, f"logim_{global_step}_{os.path.basename(image_fpaths[idx])}.png"), to8b(im))
 
 
 ###### export mesh and materials
