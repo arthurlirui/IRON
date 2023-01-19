@@ -531,8 +531,7 @@ class CompositeRenderer(nn.Module):
         super().__init__()
 
         self.MTS_TRANS = torch.from_numpy(
-            np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                    "ggx/ext_mts_rtrans_data.txt")).astype(np.float32)
+            np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/ext_mts_rtrans_data.txt")).astype(np.float32)
         )  # 5000 entries, external IOR
         self.MTS_DIFF_TRANS = torch.from_numpy(
             np.loadtxt(
@@ -808,6 +807,9 @@ class CompositeRenderer(nn.Module):
         #spec_trans = torch.clamp(params['spec_trans'], min=0.00001)
         metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
         dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
+
+        dielectric_eta = torch.clamp(params['eta_dielectric'], min=1.000001, max=1.999999)
+        conduct_eta = torch.clamp(params['eta_conduct'], )
         #clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
         #eta = torch.clamp(params['eta'], min=0.000001)
         eta = 1.48958738
