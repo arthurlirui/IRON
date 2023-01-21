@@ -49,6 +49,9 @@ def config_parser():
     parser.add_argument("--eik_weight", type=float, default=0.1, help="weight for eikonal loss")
     parser.add_argument("--ssim_weight", type=float, default=1.0, help="weight for ssim loss")
     parser.add_argument("--roughrange_weight", type=float, default=0.1, help="weight for roughness range loss")
+    parser.add_argument("--metal_eta_weight", type=float, default=0.1, help="weight for metal eta loss")
+    parser.add_argument("--metal_k_weight", type=float, default=0.1, help="weight for metal k loss")
+    parser.add_argument("--dielectric_eta_weight", type=float, default=0.1, help="weight for dielectric eta loss")
 
     parser.add_argument("--plot_image_name", type=str, default=None, help="image to plot during training")
     parser.add_argument("--no_edgesample", action="store_true", help="whether to disable edge sampling")
@@ -136,22 +139,30 @@ def render_fn(interior_mask, color_network_dict, ray_o, ray_d, points, normals, 
         "normal": normals_pad,
     }
 
+
 def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
     # rendering by using composite models
     dots_sh = list(interior_mask.shape)
     rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
+
+    # specturm buffer
     diffuse_rgb, specular_rgb = rgb.clone(), rgb.clone()
     diffuse_albedo, specular_albedo = rgb.clone(), rgb.clone()
     metallic_rgb = rgb.clone()
     dielectric_rgb = rgb.clone()
 
+    # rendering model parameters
     specular_roughness = rgb[..., 0:1].clone()
-    if True:
-        clearcoat = specular_roughness.clone()
-        metallic = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
-        dielectric = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
-        spec_tint = specular_roughness.clone()
+    metallic_eta = rgb[..., 0:1].clone()
+    metallic_k = rgb[..., 0:1].clone()
+    dielectric_eta = rgb[..., 0:1].clone()
 
+    #if True:
+    # clearcoat = specular_roughness.clone()
+    # spec_tint = specular_roughness.clone()
+    # materials components
+    metallic = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
+    dielectric = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
     #material_vector = torch.zeros(dots_sh + [4], dtype=torch.float32, device=interior_mask.device)
     normals_pad = rgb.clone()
 
@@ -176,12 +187,17 @@ def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, norm
 
         diffuse_albedo[interior_mask] = params['diffuse_albedo']
         specular_albedo[interior_mask] = params['specular_albedo']
-        specular_roughness[interior_mask] = params['specular_roughness']
-        normals_pad[interior_mask] = normals
 
-        #clearcoat[interior_mask] = params['clearcoat']
+        specular_roughness[interior_mask] = params['specular_roughness']
+        metallic_eta[interior_mask] = params['metallic_eta']
+        metallic_k[interior_mask] = params['metallic_k']
+        dielectric_eta[interior_mask] = params['dielectric_eta']
+
+        normals_pad[interior_mask] = normals
         metallic[interior_mask] = params['metallic']
         dielectric[interior_mask] = params['dielectric']
+
+        # clearcoat[interior_mask] = params['clearcoat']
         #spec_tint[interior_mask] = params['spec_tint']
 
     return {
@@ -191,16 +207,18 @@ def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, norm
         "diffuse_albedo": diffuse_albedo,
         "specular_albedo": specular_albedo,
         "specular_roughness": specular_roughness,
+        "metallic_eta": metallic_eta,
+        "metallic_k": metallic_k,
+        "dielectric_eta": dielectric_eta,
         "normal": normals_pad,
-        #"clearcoat": clearcoat,
         "metallic_rgb": metallic_rgb,
         "metallic": metallic,
         "dielectric_rgb": dielectric_rgb,
         "dielectric": dielectric,
-        #"spec_tint": spec_tint
     }
 
 if renderer_name == 'comp':
+    spectrum = 'nir'
     render_fn = render_fn_comp
 elif renderer_name == 'ggx':
     render_fn = render_fn
@@ -267,6 +285,9 @@ else:
 ###### loss specifications
 
 
+def normalize_value(value):
+    return (value - np.min(value[:])) / (np.max(value[:]) - np.min(value[:]))
+
 pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
 
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
@@ -291,7 +312,10 @@ if os.path.isfile(args.neus_ckpt_fpath):
     ckpt = torch.load(args.neus_ckpt_fpath, map_location=torch.device("cuda"))
     try:
         sdf_network.load_state_dict(ckpt["sdf_network_fine"])
-        color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+        if spectrum == 'nir':
+            pass
+        else:
+            color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
     except:
         traceback.print_exc()
         # ic("Failed to initialize diffuse_albedo_network from checkpoint: ", args.neus_ckpt_fpath)
@@ -455,7 +479,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             #results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
             results["color"] = gamma_correction(results["color"])
             results["diffuse_color"] = gamma_correction(results["diffuse_color"])
-            results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
+            results["specular_color"] = gamma_correction(results["specular_color"])
+            #results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
             #results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
 
             w = (results['distance'] / (init_light * torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1e-6))
@@ -507,19 +532,23 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             eik_loss = eik_loss + ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
 
         roughness = results["specular_roughness"][mask]
-        roughness = roughness[roughness > 0.5]
+        roughness_value = 0.1
+        roughness = roughness[roughness > roughness_value]
         if roughness.numel() > 0:
-            roughrange_loss = (roughness - 0.5).mean() * args.roughrange_weight
+            roughrange_loss = (roughness - roughness_value).mean() * args.roughrange_weight
 
         if 'metallic' in results:
-            metallicness = results["metallic"][mask]
-            metallicness = metallicness[metallicness > 0.5]
-            metallicness_loss = (torch.abs(metallicness - 0.5)).mean()
+            metal_eta = results["metallic_eta"][mask]
+            metal_k = results["metallic_k"][mask]
+            metal_eta_value, metal_k_value = 0.198125, 5.631250
+            #metallicness = metal_eta[metal_eta > ]
+            metallicness_loss = (torch.abs(metal_eta - metal_eta_value)).mean() * args.metal_eta_weight
+            metallicness_loss += (torch.abs(metal_k - metal_k_value)).mean() * args.metal_k_weight
 
         if 'dielectric' in results:
-            dielectricness = results['dielectric'][mask]
-            dielectricness = dielectricness[dielectricness > 0.5]
-            dielectricness_loss = (torch.abs(dielectricness - 0.5)).mean()
+            dielectric_eta = results['dielectric_eta'][mask]
+            #dielectric_eta = dielectric_eta[dielectric_eta > 0.5]
+            dielectricness_loss = (torch.abs(dielectric_eta - 1.5)).mean() * args.dielectric_eta_weight
             #metallicness = metallicness[metallicness > 0.0001]
         #if metallicness.numel() > 0:
         #    metallicness_loss = (metallicness - 0.5).mean() * args.roughrange_weight
@@ -559,12 +588,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         writer.add_scalar("light", color_network_dict["point_light_network"].get_light())
 
     if global_step % 1000 == 0:
-        torch.save(
-            dict(
-                [("sdf_network", sdf_network.state_dict())] + [(x, color_network_dict[x].state_dict()) for x in color_network_dict.keys()]
-            ),
-            os.path.join(args.out_dir, f"ckpt_{global_step}.pth"),
-        )
+        save_dict = dict([("sdf_network", sdf_network.state_dict())] + [(x, color_network_dict[x].state_dict()) for x in color_network_dict.keys()])
+        torch.save(save_dict, os.path.join(args.out_dir, f"ckpt_{global_step}.pth"))
 
     if global_step % 100 == 0:
         ic(
@@ -650,8 +675,12 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
 
         if renderer_name == 'comp':
             #clearcoat_map = results['clearcoat']
-            metallic_rgb = np.log(results['metallic'])
-            dielectric_rgb = np.log(results['dielectric'])
+            metallic_rgb = results['metallic']
+            dielectric_rgb = results['dielectric']
+            metal_eta = results['metallic_eta']
+            metal_k = results['metallic_k']
+            dielectric_eta = results['dielectric_eta']
+
             #spec_tint_map = results['spec_tint_rgb']
 
         if args.inv_gamma_gt:
@@ -685,6 +714,14 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
                 depth = np.power(depth + 1e-6, 1.0 / 2.2)
                 depth = (depth - np.min(depth[:])) / (np.max(depth[:]) - np.min(depth[:]))
 
+                metal_eta = np.power(metal_eta + 1e-6, 1.0 / 2.2)
+                metal_eta = (metal_eta - np.min(metal_eta[:])) / (np.max(metal_eta[:]) - np.min(metal_eta[:]))
+                metal_eta = metal_eta * 255
+                metal_k = np.power(metal_k + 1e-6, 1.0 / 2.2)
+                metal_eta = (metal_eta - np.min(metal_eta[:])) / (np.max(metal_eta[:]) - np.min(metal_eta[:]))
+                dielectric_eta = np.power(dielectric_eta + 1e-6, 1.0 / 2.2)
+
+
         if renderer_name == 'multi':
             material_map3 = np.stack([rough_plastic_map, dielectric_rgb, rough_conductor_map], axis=-1)
 
@@ -712,7 +749,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         if renderer_name == 'comp':
             img_list = [gt_color_im, normal_im, edge_mask_im,
                         color_im, diffuse_color_im, specular_color_im,
-                        metallic_rgb, dielectric_rgb, specular_roughness_im]
+                        metallic_rgb, dielectric_rgb, specular_roughness_im,
+                        metal_eta, metal_k, dielectric_eta]
         im = concatenate_result(image_list=img_list, imarray_length=3)
         #imageio.imwrite(os.path.join(args.out_dir, f"logim_{global_step}.png"), to8b(im))
         imwriter(os.path.join(args.out_dir, f"logim_{global_step}_{os.path.basename(image_fpaths[idx])}.png"), to8b(im))

@@ -410,7 +410,8 @@ def fresnel_dielectric(cosThetaI, cosThetaT, eta):
     #    cosThetaT = -1*cosThetaI
     #    return 0
     scale = torch.ones_like(cosThetaI) * eta
-    scale[cosThetaI > 0] = 1.0/eta
+    mask_costheta = cosThetaI > 0
+    scale[mask_costheta] = 1.0/eta[mask_costheta]
     cosThetaTSqr = 1 - (1-cosThetaI**2)*(scale**2)
     #if cosThetaTSqr <= 0.0:
     #    cosThetaT = 0
@@ -808,8 +809,10 @@ class CompositeRenderer(nn.Module):
         metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
         dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
 
-        dielectric_eta = torch.clamp(params['eta_dielectric'], min=1.000001, max=1.999999)
-        conduct_eta = torch.clamp(params['eta_conduct'], )
+        dielectric_eta = torch.clamp(params['dielectric_eta'], min=1.000001, max=1.999999)
+        metallic_eta = torch.clamp(params['metallic_eta'], min=0.099999, max=4.999999)
+        metallic_k = torch.clamp(params['metallic_k'], min=0.099999, max=9.999999)
+
         #clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
         #eta = torch.clamp(params['eta'], min=0.000001)
         eta = 1.48958738
@@ -852,9 +855,9 @@ class CompositeRenderer(nn.Module):
         if True:
             eta_cu = 0.28
             k_cu = 5.4856
-            main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, eta_cu, k_cu, specular_albedo)
             eta = 1.5
-            main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, eta, specular_albedo)
+            main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, metallic_eta, metallic_k, specular_albedo)
+            main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, dielectric_eta, specular_albedo)
             #main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
         else:
             main_specular_rgb = torch.zeros_like(specular_albedo)
@@ -871,8 +874,8 @@ class CompositeRenderer(nn.Module):
                                                   diffuse_albedo=diffuse_albedo)
 
         rgb = diffuse_rgb
-        main_metallic_rgb = metallic * light_intensity * main_metallic_rgb
-        main_dielectric_rgb = dielectric * light_intensity * main_dielectric_rgb
+        main_metallic_rgb = light_intensity * main_metallic_rgb
+        main_dielectric_rgb = light_intensity * main_dielectric_rgb
         rgb += main_metallic_rgb
         rgb += main_dielectric_rgb
 

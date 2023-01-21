@@ -27,6 +27,11 @@ def get_materials_comp(network_dict, points, normals, features):
     specular_roughness = network_dict["specular_roughness_network"](points, normals, None, features).abs()
     #anisotropic = network_dict["anisotropic_network"](points, normals, None, features).abs()
     dielectric = network_dict["dielectric_network"](points, normals, None, features).abs()
+
+    metallic_eta = network_dict["metallic_eta_network"](points, normals, None, features).abs()
+    metallic_k = network_dict["metallic_k_network"](points, normals, None, features).abs()
+    dielectric_eta = network_dict["dielectric_eta_network"](points, normals, None, features).abs()
+
     #material_vector = network_dict["material_network"](points, None, None, features).abs()
     res['diffuse_albedo'] = diffuse_albedo
     res['specular_albedo'] = specular_albedo
@@ -35,6 +40,9 @@ def get_materials_comp(network_dict, points, normals, features):
     res['dielectric'] = dielectric
     #res['spec_tint'] = spec_tint
     res['specular_roughness'] = specular_roughness
+    res['metallic_eta'] = metallic_eta
+    res['metallic_k'] = metallic_k
+    res['dielectric_eta'] = dielectric_eta
     #res['anisotropic'] = anisotropic
     #res['material_vector'] = material_vector
     return res
