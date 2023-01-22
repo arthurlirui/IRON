@@ -182,7 +182,35 @@ def show_colormap():
 
     plt.show()
 
+
+def plot_eta_k_wavelength():
+    import matplotlib.pyplot as plt
+    iorpath = '/home/lir0b/Code/NeuralRep/NIR-3Drec/dependencies/mitsuba-data/ior'
+    materials = ['Au', 'Cu', 'Al', 'Ag', 'Rh', 'Se', 'Hg', 'Cr']
+    #materials = ['Ag']
+    color = iter(cm.jet(np.linspace(0, 1, len(materials))))
+    fig, ax = plt.subplots()
+    #ax2 = ax.twinx()
+    for m in materials:
+        iorname = m
+        kname = f'{iorname}.k.spd'
+        etaname = f'{iorname}.eta.spd'
+        eta = np.loadtxt(os.path.join(iorpath, etaname))
+        k = np.loadtxt(os.path.join(iorpath, kname))
+        ax.plot(k[:, 0], k[:, 1], c=next(color), linewidth=2, label=m)
+        #ax2.plot(k[:, 0], k[:, 1], c=next(color), linewidth=2, label=m)
+
+    #plt.title(m + r' - $\lambda$=%.2f$\sim$%.2f nm $\eta$=%.2f$\sim$%.2f $k$=%.2f$\sim$%.2f' % (
+    #eta[0][0], eta[-1][0], eta[0][1], eta[-1][1], k[0][1], k[-1][1]))
+    #plt.colorbar()
+    ax.set_xlabel("$\lambda$")
+    ax.set_ylabel("$k$")
+    plt.legend(loc='best')
+    plt.show()
+
+
 if __name__ == '__main__':
     #plot_fresnel_term_for_wavelength()
     #plot_fresnel_term_for_dielectric()
-    show_colormap()
+    #show_colormap()
+    plot_eta_k_wavelength()

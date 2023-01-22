@@ -75,17 +75,6 @@ def config_parser():
         action="store_true",
         help="whether to render the input image set",
     )
-
-    parser.add_argument(
-        "--train_rgb",
-        action="store_true",
-        help="whether to render the input image set RGB",
-    )
-    parser.add_argument(
-        "--train_nir",
-        action="store_true",
-        help="whether to render the input image set NIR",
-    )
     parser.add_argument("--gpu", type=int, default=0)
     return parser
 
@@ -323,14 +312,10 @@ if os.path.isfile(args.neus_ckpt_fpath):
     ckpt = torch.load(args.neus_ckpt_fpath, map_location=torch.device("cuda"))
     try:
         sdf_network.load_state_dict(ckpt["sdf_network_fine"])
-        if args.train_nir:
-            # load sdf only, train albedo, roughness and refractive index for NIR
-            #color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+        if spectrum == 'nir':
             pass
-        elif args.train_rgb:
-            # load sdf, train diffuse albedo and specular albedo for RGB images
-            #color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
-            pass
+        else:
+            color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
     except:
         traceback.print_exc()
         # ic("Failed to initialize diffuse_albedo_network from checkpoint: ", args.neus_ckpt_fpath)
@@ -349,25 +334,10 @@ if len(ckpt_fpaths) > 0:
     ic("Reloading from checkpoint: ", ckpt_fpath)
     ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
     sdf_network.load_state_dict(ckpt["sdf_network"])
-    if args.train_rgb:
-        network_enable = {'color_network': True, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
-                          'point_light_network': True,
-                          'metallic_network': False, 'dielectric_network': False, 'specular_roughness_network': False,
-                          'metallic_eta_network': False, 'metallic_k_network': False, 'dielectric_eta_network': False}
-    if args.train_nir:
-        network_enable = {'color_network': False, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
-                          'point_light_network': True,
-                          'metallic_network': False, 'dielectric_network': False, 'specular_roughness_network': True,
-                          'metallic_eta_network': True, 'metallic_k_network': True, 'dielectric_eta_network': True}
     for x in list(color_network_dict.keys()):
         if x in ckpt:
-            #print(x)
+            print(x)
             color_network_dict[x].load_state_dict(ckpt[x])
-            if not network_enable[x]:
-                print(x)
-                for para in color_network_dict[x].parameters():
-                    para.requires_grad = False
-
     # logim_names = [os.path.basename(x) for x in glob.glob(os.path.join(args.out_dir, "logim_*.png"))]
     # start_step = sorted([int(x[len("logim_") : -4]) for x in logim_names])[-1]
 ic(dist, color_network_dict["point_light_network"].light.data)
@@ -513,8 +483,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             #results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
             #results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
 
-            #w = (results['distance'] / (init_light * torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1e-6))
-            #f = results["color"] * torch.stack([w, w, w], dim=-1)
+            w = (results['distance'] / (init_light * torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1e-6))
+            f = results["color"] * torch.stack([w, w, w], dim=-1)
         except:
             print(results.keys())
             #print(results)
@@ -529,8 +499,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     roughrange_loss = torch.Tensor([0.0]).cuda()
     metallicness_loss = torch.Tensor([0.0]).cuda()
     dielectricness_loss = torch.Tensor([0.0]).cuda()
-    #material_type_loss = torch.Tensor([0.0]).cuda()
-    #material_sparse_loss = torch.Tensor([0.0]).cuda()
+    material_type_loss = torch.Tensor([0.0]).cuda()
+    material_sparse_loss = torch.Tensor([0.0]).cuda()
 
     eik_points = torch.empty(camera_crop.H * camera_crop.W // 2, 3).cuda().float().uniform_(-1.0, 1.0)
     eik_grad = sdf_network.gradient(eik_points).view(-1, 3)
@@ -562,7 +532,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             eik_loss = eik_loss + ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
 
         roughness = results["specular_roughness"][mask]
-        roughness_value = 0.5
+        roughness_value = 0.1
         roughness = roughness[roughness > roughness_value]
         if roughness.numel() > 0:
             roughrange_loss = (roughness - roughness_value).mean() * args.roughrange_weight
@@ -570,10 +540,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         if 'metallic' in results:
             metal_eta = results["metallic_eta"][mask]
             metal_k = results["metallic_k"][mask]
-            #metal_eta_value, metal_k_value = 0.198125, 5.631250
-            metal_eta_value, metal_k_value = 1.0, 10.0
-            metal_eta = metal_eta[metal_eta > metal_eta_value]
-            metal_k = metal_k[metal_k > metal_k_value]
+            metal_eta_value, metal_k_value = 0.198125, 5.631250
             #metallicness = metal_eta[metal_eta > ]
             metallicness_loss = (torch.abs(metal_eta - metal_eta_value)).mean() * args.metal_eta_weight
             metallicness_loss += (torch.abs(metal_k - metal_k_value)).mean() * args.metal_k_weight
@@ -669,14 +636,14 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             if renderer_name == 'multi':
                 results["material_vector"] = torch.clamp(results["material_vector"], min=0.0, max=10.0)
 
-            #w = (results['distance'] / (torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1))
-            #f = results["color"] * torch.stack([w, w, w], dim=-1)
+            w = (results['distance'] / (torch.sum(results['normal'] * results['ray_d'], dim=-1, keepdim=False) + 1))
+            f = results["color"] * torch.stack([w, w, w], dim=-1)
 
         for x in list(results.keys()):
             results[x] = results[x].detach().cpu().numpy()
 
         gt_color_im = gt_color_resize.detach().cpu().numpy()
-        #nir_sparse = f.detach().cpu().numpy()
+        nir_sparse = f.detach().cpu().numpy()
         color_im = results["color"]
         diffuse_color_im = results["diffuse_color"]
         specular_color_im = results["specular_color"]
@@ -708,8 +675,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
 
         if renderer_name == 'comp':
             #clearcoat_map = results['clearcoat']
-            metallic_rgb = results['metallic_rgb']
-            dielectric_rgb = results['dielectric_rgb']
+            metallic_rgb = results['metallic']
+            dielectric_rgb = results['dielectric']
             metal_eta = results['metallic_eta']
             metal_k = results['metallic_k']
             dielectric_eta = results['dielectric_eta']
@@ -721,7 +688,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             color_im = np.power(color_im + 1e-6, 1.0 / 2.2)
             diffuse_color_im = np.power(diffuse_color_im + 1e-6, 1.0 / 2.2)
             specular_color_im = color_im - diffuse_color_im
-            #nir_sparse = np.power(nir_sparse + 1e-6, 1.0 / 2.2)
+            nir_sparse = np.power(nir_sparse + 1e-6, 1.0 / 2.2)
 
             if renderer_name == 'multi':
                 rough_plastic_map = np.power(rough_plastic_map + 1e-6, 1.0/2.2)
@@ -753,6 +720,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
                 metal_k = np.power(metal_k + 1e-6, 1.0 / 2.2)
                 metal_eta = (metal_eta - np.min(metal_eta[:])) / (np.max(metal_eta[:]) - np.min(metal_eta[:]))
                 dielectric_eta = np.power(dielectric_eta + 1e-6, 1.0 / 2.2)
+
 
         if renderer_name == 'multi':
             material_map3 = np.stack([rough_plastic_map, dielectric_rgb, rough_conductor_map], axis=-1)

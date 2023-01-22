@@ -470,6 +470,8 @@ class DatasetNIRRGB:
                 self.NIR_list = sorted(glob.glob(os.path.join(self.data_nir_dir, '*.exr')))
                 self.n_NIR = len(self.NIR_list)
                 self.NIR_np = np.stack([self.exr_reader(im_name) for im_name in self.NIR_list])
+            if self.NIR_np.shape[-1] == 1:
+                self.NIR_np = np.concatenate([self.NIR_np, self.NIR_np, self.NIR_np], axis=-1)
             self.enable_NIR = True
         else:
             print("No existing NIR dataset")

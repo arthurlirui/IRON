@@ -364,14 +364,15 @@ class Runner:
             weight_max = render_out["weight_max"]
             weight_sum = render_out["weight_sum"]
             pred_rgb = color_fine[..., :3]
-            pred_nir = color_fine[..., 3:6]
+            #pred_nir = color_fine[..., 3:6]
             # Loss
-            if data_type == 'rgb':
-                color_error = (pred_rgb - true_rgb) * mask
-            elif data_type == 'nir':
-                color_error = (pred_nir - true_rgb) * mask
-            else:
-                pass
+            color_error = (pred_rgb - true_rgb) * mask
+            # if data_type == 'rgb':
+            #     color_error = (pred_rgb - true_rgb) * mask
+            # elif data_type == 'nir':
+            #     color_error = (pred_nir - true_rgb) * mask
+            # else:
+            #     pass
 
             # previous
             color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
@@ -379,13 +380,13 @@ class Runner:
             # Arthur
             # color_fine_loss = F.l2_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
             # color_fine_loss = F.mse_loss(color_fine * mask, true_rgb * mask, reduction='sum') / mask_sum
-
-            if data_type == 'rgb':
-                psnr = 20.0 * torch.log10(1.0 / (((pred_rgb - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
-            elif data_type == 'nir':
-                psnr = 20.0 * torch.log10(1.0 / (((pred_nir - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
-            else:
-                pass
+            psnr = 20.0 * torch.log10(1.0 / (((pred_rgb - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+            # if data_type == 'rgb':
+            #     psnr = 20.0 * torch.log10(1.0 / (((pred_rgb - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+            # elif data_type == 'nir':
+            #     psnr = 20.0 * torch.log10(1.0 / (((pred_nir - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+            # else:
+            #     pass
             #psnr = 20.0 * torch.log10(1.0 / (((color_fine - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
 
             eikonal_loss = gradient_error
@@ -843,11 +844,11 @@ if __name__ == "__main__":
             #runner.train_RGB()
             runner.train_NIR()
         #runner.train_NIRRGB(data_type='rgb')
-        elif os.path.basename(args.conf) == 'nir.conf':
+        elif os.path.basename(args.conf) == 'nir.conf' or os.path.basename(args.conf) == 'nir_mask.conf':
             runner.train_NIRRGB(data_type='nir')
         elif os.path.basename(args.conf) == 'flash_rgb_real.conf':
             runner.train_NIRRGB(data_type='rgb')
-        elif os.path.basename(args.conf) == 'rgb_mask.conf':
+        elif os.path.basename(args.conf) == 'nirrgb_mask.conf':
             runner.train_NIRRGB(data_type='rgb')
         else:
             runner.train_NIRRGB(data_type='rgb')

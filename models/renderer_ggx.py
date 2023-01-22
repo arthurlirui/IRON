@@ -839,8 +839,17 @@ class CompositeRenderer(nn.Module):
         D = self.calc_D_specular(cos_theta_i, eta)
         G = self.calc_G_specular(cos_theta_i, alpha_u, alpha_v)
 
+        #cosTheta2 = cos_theta_i * cos_theta_i
+        #root = cosTheta2 + (1.0 - cosTheta2) / (alpha_u * alpha_v + 1e-10)
+        #D = 1.0 / (np.pi * alpha_u * alpha_v * root * root + 1e-10)
+        ## compute fresnel: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/libcore/util.cpp#L651
+        # F = 0.04
+        #F = 0.03867
+
+
         # decay light according to squared-distance falloff
         light_intensity = light / (distance * distance + 1e-10)
+        #specular_rgb = light_intensity * specular_albedo * F * D * G / (4.0 * cos_theta_i + 1e-10)
 
         if False:
             main_specular_rgb = self.main_specular_reflection(D=D,
@@ -858,14 +867,17 @@ class CompositeRenderer(nn.Module):
             eta = 1.5
             main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, metallic_eta, metallic_k, specular_albedo)
             main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, dielectric_eta, specular_albedo)
+            main_metallic_rgb *= light_intensity
+            main_dielectric_rgb *= light_intensity
             #main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
+            main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
         else:
             main_specular_rgb = torch.zeros_like(specular_albedo)
 
-        if False:
-            clearcoat_specular_rgb = self.secondary_isotropic_specular_reflection(cos_theta_i, clearcoat, eta)
-        else:
-            clearcoat_specular_rgb = torch.zeros_like(specular_albedo)
+        #if False:
+        #    clearcoat_specular_rgb = self.secondary_isotropic_specular_reflection(cos_theta_i, clearcoat, eta)
+        #else:
+        #    clearcoat_specular_rgb = torch.zeros_like(specular_albedo)
 
         #diffuse_rgb = self.diffuse_reflection(cos_theta=cos_theta_i, alpha=1.0-roughness, diffuse_albedo=diffuse_albedo)
         diffuse_rgb = self.diffuse_reflection_ggx(light_intensity=light_intensity,
@@ -874,16 +886,17 @@ class CompositeRenderer(nn.Module):
                                                   diffuse_albedo=diffuse_albedo)
 
         rgb = diffuse_rgb
-        main_metallic_rgb = light_intensity * main_metallic_rgb
-        main_dielectric_rgb = light_intensity * main_dielectric_rgb
+        #rgb += specular_rgb
+        #main_metallic_rgb = light_intensity * main_metallic_rgb
+        #main_dielectric_rgb = light_intensity * main_dielectric_rgb
         rgb += main_metallic_rgb
         rgb += main_dielectric_rgb
 
         ret = {"diffuse_rgb": diffuse_rgb,
-               "specular_rgb": main_metallic_rgb+main_dielectric_rgb,
+               "specular_rgb": main_specular_rgb,
                "metallic_rgb": main_metallic_rgb,
                "dielectric_rgb": main_dielectric_rgb,
-               "clearcoat_specular": clearcoat_specular_rgb,
+               #"clearcoat_specular": clearcoat_specular_rgb,
                "rgb": rgb}
         return ret
 
