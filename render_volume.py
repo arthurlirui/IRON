@@ -816,10 +816,9 @@ class Runner:
                 vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
 
             mesh = trimesh.Trimesh(vertices, triangles)
-            mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}_rgb.ply".format(self.iter_step)))
+            mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}_nir.ply".format(self.iter_step)))
 
             logging.info("End")
-
 
     def interpolate_view(self, img_idx_0, img_idx_1):
         images = []
