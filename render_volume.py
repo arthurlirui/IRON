@@ -121,7 +121,10 @@ class Runner:
         # Load checkpoint
         latest_model_name = None
         if is_continue:
-            model_list_raw = os.listdir(os.path.join(self.base_exp_dir, "checkpoints"))
+            if self.dataset.enable_NIR:
+                model_list_raw = os.listdir(os.path.join(self.rgb_exp_dir, "checkpoints"))
+            if self.dataset.enable_RGB:
+                model_list_raw = os.listdir(os.path.join(self.base_exp_dir, "checkpoints"))
             model_list = []
             for model_name in model_list_raw:
                 if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
@@ -131,7 +134,10 @@ class Runner:
 
         if latest_model_name is not None:
             logging.info("Find checkpoint: {}".format(latest_model_name))
-            self.load_checkpoint(latest_model_name)
+            if self.dataset.enable_NIR:
+                self.load_checkpoint_NIR(latest_model_name)
+            if self.dataset.enable_RGB:
+                self.load_checkpoint(latest_model_name)
 
         # Backup codes and configs for debug
         if self.mode[:5] == "train":
@@ -240,10 +246,10 @@ class Runner:
             near, far = self.dataset.near_far_from_sphere(rays_o, rays_d, scale=0.2)
 
             background_rgb = None
-            background_nir = None
+            #background_nir = None
             if self.use_white_bkgd:
                 background_rgb = torch.ones([1, 3])
-                background_nir = torch.zeros([1, 3])
+                #background_nir = torch.zeros([1, 3])
 
             if self.mask_weight > 0.0:
                 mask = (mask > 0.5).float()
@@ -348,14 +354,24 @@ class Runner:
                 mask = torch.ones_like(mask)
 
             mask_sum = mask.sum() + 1e-5
-            render_out = self.renderer.render(
-                rays_o,
-                rays_d,
-                near,
-                far,
-                background_rgb=background_rgb,
-                cos_anneal_ratio=self.get_cos_anneal_ratio(),
-            )
+            if data_type == 'rgb':
+                render_out = self.renderer.render(
+                    rays_o,
+                    rays_d,
+                    near,
+                    far,
+                    background_rgb=background_rgb,
+                    cos_anneal_ratio=self.get_cos_anneal_ratio(),
+                )
+            elif data_type == 'nir':
+                render_out = self.renderer_nir.render(
+                    rays_o,
+                    rays_d,
+                    near,
+                    far,
+                    background_rgb=background_rgb,
+                    cos_anneal_ratio=self.get_cos_anneal_ratio(),
+                )
 
             color_fine = render_out["color_fine"]
             s_val = render_out["s_val"]
@@ -417,6 +433,7 @@ class Runner:
                 self.save_checkpoint()
 
             if self.iter_step % self.val_freq == 0:
+                #self.validate_image(data_type=data_type)
                 self.validate_image(data_type=data_type)
 
             if self.iter_step % self.val_mesh_freq == 0:
@@ -514,7 +531,7 @@ class Runner:
             if self.iter_step % self.save_freq == 0:
                 self.save_checkpoint()
 
-            if self.iter_step % self.val_freq == 0:
+            if True or self.iter_step % self.val_freq == 0:
                 self.validate_image()
 
             if self.iter_step % self.val_mesh_freq == 0:
@@ -568,6 +585,21 @@ class Runner:
         self.deviation_network.load_state_dict(checkpoint["variance_network_fine"])
         self.color_network.load_state_dict(checkpoint["color_network_fine"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
+        self.iter_step = checkpoint["iter_step"]
+
+        logging.info("End")
+
+    def load_checkpoint_NIR(self, checkpoint_name):
+        print('loading sdf from RGB part')
+        checkpoint = torch.load(
+            os.path.join(self.rgb_exp_dir, "checkpoints", checkpoint_name),
+            map_location=self.device,
+        )
+        #self.nerf_outside.load_state_dict(checkpoint["nerf"])
+        self.sdf_network.load_state_dict(checkpoint["sdf_network_fine"])
+        self.deviation_network.load_state_dict(checkpoint["variance_network_fine"])
+        #self.color_network.load_state_dict(checkpoint["color_network_fine"])
+        #self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.iter_step = checkpoint["iter_step"]
 
         logging.info("End")
@@ -685,7 +717,7 @@ class Runner:
         os.makedirs(os.path.join(self.base_exp_dir, "validations_fine"), exist_ok=True)
         os.makedirs(os.path.join(self.base_exp_dir, "normals"), exist_ok=True)
 
-        print(normal_img.shape, img_fine.shape)
+        #print(normal_img.shape, img_fine.shape)
         for i in range(img_fine.shape[-1]):
             if len(out_rgb_fine) > 0:
                 if False:
@@ -695,11 +727,12 @@ class Runner:
                     self.base_exp_dir,
                     "validations_fine",
                     "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
-                img = np.concatenate(
-                    [
-                        img_fine[..., i],
-                        self.dataset.image_at(idx, resolution_level=resolution_level, data_type=data_type)[:, :, :3]
-                    ], axis=0).astype('uint8')
+                imggt = self.dataset.image_at(idx, resolution_level=resolution_level, data_type=data_type)
+                if len(imggt.shape) == 2:
+                    imggt = np.stack([imggt, imggt, imggt], axis=-1)
+                elif imggt.shape[-1] == 1:
+                    imggt = np.concatenate([imggt, imggt, imggt], axis=-1)
+                img = np.concatenate([img_fine[..., i], imggt], axis=0).astype('uint8')
                 #print(img.shape)
                 self.dataset.image_writer(img_path, img)
                 # cv.imwrite(
@@ -764,18 +797,29 @@ class Runner:
         bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
         bound_max = torch.tensor(self.dataset.object_bbox_max, dtype=torch.float32)
 
-        vertices, triangles = self.renderer.extract_geometry(
-            bound_min, bound_max, resolution=resolution, threshold=threshold
-        )
-        os.makedirs(os.path.join(self.base_exp_dir, "meshes"), exist_ok=True)
+        if self.dataset.enable_RGB:
+            vertices, triangles = self.renderer.extract_geometry(bound_min, bound_max,
+                                                                 resolution=resolution, threshold=threshold)
+            os.makedirs(os.path.join(self.base_exp_dir, "meshes"), exist_ok=True)
+            if world_space:
+                vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
+            mesh = trimesh.Trimesh(vertices, triangles)
+            mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}_rgb.ply".format(self.iter_step)))
+            logging.info("End")
 
-        if world_space:
-            vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
+        if self.dataset.enable_NIR:
+            vertices, triangles = self.renderer_nir.extract_geometry(bound_min, bound_max,
+                                                                     resolution=resolution, threshold=threshold)
+            os.makedirs(os.path.join(self.base_exp_dir, "meshes"), exist_ok=True)
 
-        mesh = trimesh.Trimesh(vertices, triangles)
-        mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}.ply".format(self.iter_step)))
+            if world_space:
+                vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
 
-        logging.info("End")
+            mesh = trimesh.Trimesh(vertices, triangles)
+            mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}_rgb.ply".format(self.iter_step)))
+
+            logging.info("End")
+
 
     def interpolate_view(self, img_idx_0, img_idx_1):
         images = []
@@ -843,7 +887,8 @@ if __name__ == "__main__":
         if conf_filename == 'nirrgb.conf':
             #runner.train_RGB()
             runner.train_NIR()
-        #runner.train_NIRRGB(data_type='rgb')
+        elif os.path.basename(args.conf) == 'rgb.conf' or os.path.basename(args.conf) == 'rgb_mask.conf':
+            runner.train_NIRRGB(data_type='rgb')
         elif os.path.basename(args.conf) == 'nir.conf' or os.path.basename(args.conf) == 'nir_mask.conf':
             runner.train_NIRRGB(data_type='nir')
         elif os.path.basename(args.conf) == 'flash_rgb_real.conf':

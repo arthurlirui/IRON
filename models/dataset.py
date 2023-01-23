@@ -435,8 +435,8 @@ class DatasetNIRRGB:
 
         print(self.camera_dict.keys())
 
-        self.enable_RGB = False
-        self.enable_NIR = False
+        self.enable_RGB = conf['enable_rgb']
+        self.enable_NIR = conf['enable_nir']
         if os.path.exists(self.data_rgb_dir):
             try:
                 #self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, f'*.{self.file_type}')))
@@ -449,7 +449,7 @@ class DatasetNIRRGB:
                 self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, '*.exr')))
                 self.n_RGB = len(self.RGB_list)
                 self.RGB_np = np.stack([self.exr_reader(im_name) for im_name in self.RGB_list])
-            self.enable_RGB = True
+            #self.enable_RGB = True
         else:
             print("No existing RGB dataset")
             self.enable_RGB = False
@@ -472,7 +472,7 @@ class DatasetNIRRGB:
                 self.NIR_np = np.stack([self.exr_reader(im_name) for im_name in self.NIR_list])
             if self.NIR_np.shape[-1] == 1:
                 self.NIR_np = np.concatenate([self.NIR_np, self.NIR_np, self.NIR_np], axis=-1)
-            self.enable_NIR = True
+            #self.enable_NIR = True
         else:
             print("No existing NIR dataset")
             self.enable_NIR = False

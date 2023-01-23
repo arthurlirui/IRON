@@ -42,6 +42,7 @@ def config_parser():
     parser = configargparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default=None, help="input data directory")
     parser.add_argument("--out_dir", type=str, default=None, help="output directory")
+    parser.add_argument("--nir_dir", type=str, default=None, help="output directory")
     parser.add_argument("--folder_name", type=str, default="image", help="dataset image folder")
     parser.add_argument("--neus_ckpt_fpath", type=str, default=None, help="checkpoint to load")
     parser.add_argument("--num_iters", type=int, default=100001, help="number of iterations")
@@ -228,6 +229,7 @@ def render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, norm
         "dielectric": dielectric,
     }
 
+
 if renderer_name == 'comp':
     spectrum = 'nir'
     render_fn = render_fn_comp
@@ -329,8 +331,8 @@ if os.path.isfile(args.neus_ckpt_fpath):
             pass
         elif args.train_rgb:
             # load sdf, train diffuse albedo and specular albedo for RGB images
-            #color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
-            pass
+            color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+            #color_network_dict["specular_albedo_network"].load_state_dict(ckpt["color_network_fine"])
     except:
         traceback.print_exc()
         # ic("Failed to initialize diffuse_albedo_network from checkpoint: ", args.neus_ckpt_fpath)
@@ -341,28 +343,52 @@ color_network_dict["point_light_network"].set_light(init_light)
 #### load pretrained checkpoints
 start_step = -1
 ckpt_fpaths = glob.glob(os.path.join(args.out_dir, "ckpt_*.pth"))
+ckpt_fpaths_nir = glob.glob(os.path.join(args.nir_dir, "ckpt_*.pth"))
+
+def load_ckpt(ckpt_path):
+    ckpt_fpaths = glob.glob(os.path.join(ckpt_path, "ckpt_*.pth"))
+    if len(ckpt_fpaths) > 0:
+        path2step = lambda x: int(os.path.basename(x)[len("ckpt_"): -4])
+        ckpt_fpaths = sorted(ckpt_fpaths, key=path2step)
+        ckpt_fpath = ckpt_fpaths[-1]
+        start_step = path2step(ckpt_fpath)
+        ic("Reloading from checkpoint: ", ckpt_fpath)
+        ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
+    return ckpt, start_step
+
 if len(ckpt_fpaths) > 0:
-    path2step = lambda x: int(os.path.basename(x)[len("ckpt_"): -4])
-    ckpt_fpaths = sorted(ckpt_fpaths, key=path2step)
-    ckpt_fpath = ckpt_fpaths[-1]
-    start_step = path2step(ckpt_fpath)
-    ic("Reloading from checkpoint: ", ckpt_fpath)
-    ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
+    # path2step = lambda x: int(os.path.basename(x)[len("ckpt_"): -4])
+    # ckpt_fpaths = sorted(ckpt_fpaths, key=path2step)
+    # ckpt_fpath = ckpt_fpaths[-1]
+    # start_step = path2step(ckpt_fpath)
+    # ic("Reloading from checkpoint: ", ckpt_fpath)
+    # ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
+
+    ckpt, start_step = load_ckpt(ckpt_path=args.out_dir)
+    ckpt_nir, start_step2 = load_ckpt(ckpt_path=args.nir_dir)
+
     sdf_network.load_state_dict(ckpt["sdf_network"])
+
     if args.train_rgb:
         network_enable = {'color_network': True, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
                           'point_light_network': True,
                           'metallic_network': False, 'dielectric_network': False, 'specular_roughness_network': False,
                           'metallic_eta_network': False, 'metallic_k_network': False, 'dielectric_eta_network': False}
+
     if args.train_nir:
-        network_enable = {'color_network': False, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
+        network_enable = {'color_network': True, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
                           'point_light_network': True,
                           'metallic_network': False, 'dielectric_network': False, 'specular_roughness_network': True,
                           'metallic_eta_network': True, 'metallic_k_network': True, 'dielectric_eta_network': True}
     for x in list(color_network_dict.keys()):
         if x in ckpt:
             #print(x)
-            color_network_dict[x].load_state_dict(ckpt[x])
+            if args.train_rgb:
+                if not network_enable[x]:
+                    color_network_dict[x].load_state_dict(ckpt_nir[x])
+            else:
+                color_network_dict[x].load_state_dict(ckpt[x])
+
             if not network_enable[x]:
                 print(x)
                 for para in color_network_dict[x].parameters():
