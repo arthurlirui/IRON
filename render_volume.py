@@ -125,6 +125,10 @@ class Runner:
         if is_continue:
             print(os.path.join(self.rgb_exp_dir, "checkpoints"))
             print(os.path.join(self.base_exp_dir, "checkpoints"))
+            os.makedirs(os.path.join(self.rgb_exp_dir), exist_ok=True)
+            os.makedirs(os.path.join(self.rgb_exp_dir, "checkpoints"), exist_ok=True)
+            os.makedirs(os.path.join(self.base_exp_dir), exist_ok=True)
+            os.makedirs(os.path.join(self.base_exp_dir, "checkpoints"), exist_ok=True)
             if self.dataset.enable_NIR:
                 model_list_raw = os.listdir(os.path.join(self.rgb_exp_dir, "checkpoints"))
                 model_list = []
