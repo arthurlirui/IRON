@@ -88,6 +88,9 @@ def config_parser():
         help="whether to render the input image set NIR",
     )
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--use_mask",
+                        action="store_true",
+                        help="whether to use mask",)
     return parser
 
 
@@ -306,7 +309,10 @@ pyramidl2_loss_fn = PyramidL2Loss(use_cuda=True)
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
 #RGB_fpaths, RGB_gt_images, RGB_Ks, RGB_W2Cs = load_datadir(args.data_dir, folder_name='rgb')
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, folder_name='nir')
-image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB_alignRGB(args.data_dir, args.folder_name, 'cam_dict_norm.json')
+image_fpaths, gt_images, Ks, W2Cs = load_dataset_NIRRGB_alignRGB(args.data_dir,
+                                                                 args.folder_name,
+                                                                 'cam_dict_norm.json',
+                                                                 use_mask=args.use_mask)
 for ipath in image_fpaths:
     print(ipath)
 #image_fpaths, gt_images, Ks, W2Cs = load_datadir(args.data_dir, args.folder_name)
@@ -593,7 +599,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
         if roughness.numel() > 0:
             roughrange_loss = (roughness - roughness_value).mean() * args.roughrange_weight
 
-        if 'metallic' in results:
+        if 'metallic_eta' in results:
             metal_eta = results["metallic_eta"][mask]
             metal_k = results["metallic_k"][mask]
             #metal_eta_value, metal_k_value = 0.198125, 5.631250
@@ -604,7 +610,7 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
             metallicness_loss = (torch.abs(metal_eta - metal_eta_value)).mean() * args.metal_eta_weight
             metallicness_loss += (torch.abs(metal_k - metal_k_value)).mean() * args.metal_k_weight
 
-        if 'dielectric' in results:
+        if 'dielectric_eta' in results:
             dielectric_eta = results['dielectric_eta'][mask]
             #dielectric_eta = dielectric_eta[dielectric_eta > 0.5]
             dielectricness_loss = (torch.abs(dielectric_eta - 1.5)).mean() * args.dielectric_eta_weight

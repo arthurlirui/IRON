@@ -40,6 +40,8 @@ class Runner:
         #self.conf["dataset.rgb_dir"] = self.conf['dataset']['rgb_dir']
         #self.conf["dataset.nir_dir"] = self.conf['dataset']['nir_dir']
         self.base_exp_dir = self.conf["general.base_exp_dir"]
+        self.rgb_exp_dir = self.conf["general.rgb_exp_dir"]
+        os.makedirs(self.rgb_exp_dir, exist_ok=True)
         os.makedirs(self.base_exp_dir, exist_ok=True)
 
         self.dataset = DatasetNIRRGB(self.conf["dataset"])
@@ -123,21 +125,44 @@ class Runner:
         if is_continue:
             if self.dataset.enable_NIR:
                 model_list_raw = os.listdir(os.path.join(self.rgb_exp_dir, "checkpoints"))
+                model_list = []
+                for model_name in model_list_raw:
+                    if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
+                        model_list.append(model_name)
+                model_list.sort()
+                latest_rgb_model_name = model_list[-1]
+
+                model_list_raw = os.listdir(os.path.join(self.base_exp_dir, "checkpoints"))
+                model_list = []
+                for model_name in model_list_raw:
+                    if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
+                        model_list.append(model_name)
+                model_list.sort()
+                latest_nir_model_name = model_list[-1]
+                logging.info("Find checkpoint: rgb{} nir{}".format(latest_rgb_model_name, latest_nir_model_name))
+                if latest_rgb_model_name is not None and latest_nir_model_name is not None:
+                    self.load_checkpoint_NIR(rgb_checkpoint_name=latest_rgb_model_name,
+                                             nir_checkpoint_name=latest_nir_model_name)
+
             if self.dataset.enable_RGB:
                 model_list_raw = os.listdir(os.path.join(self.base_exp_dir, "checkpoints"))
-            model_list = []
-            for model_name in model_list_raw:
-                if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
-                    model_list.append(model_name)
-            model_list.sort()
-            latest_model_name = model_list[-1]
+                model_list = []
+                for model_name in model_list_raw:
+                    if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
+                        model_list.append(model_name)
+                model_list.sort()
+                latest_model_name = model_list[-1]
+                if latest_model_name is not None:
+                    logging.info("Find checkpoint: {}".format(latest_model_name))
+                    self.load_checkpoint(latest_model_name)
 
-        if latest_model_name is not None:
-            logging.info("Find checkpoint: {}".format(latest_model_name))
-            if self.dataset.enable_NIR:
-                self.load_checkpoint_NIR(latest_model_name)
-            if self.dataset.enable_RGB:
-                self.load_checkpoint(latest_model_name)
+        # if latest_model_name is not None:
+        #     logging.info("Find checkpoint: {}".format(latest_model_name))
+        #     if self.dataset.enable_NIR:
+        #         self.load_checkpoint_NIR(rgb_checkpoint_name=rgb_models_name,
+        #                                  nir_checkpoint_name=latest_model_name)
+        #     if self.dataset.enable_RGB:
+        #         self.load_checkpoint(latest_model_name)
 
         # Backup codes and configs for debug
         if self.mode[:5] == "train":
@@ -430,7 +455,7 @@ class Runner:
                 print("iter:{:8>d} loss = {} lr={}".format(self.iter_step, loss, self.optimizer.param_groups[0]["lr"]))
 
             if self.iter_step % self.save_freq == 0:
-                self.save_checkpoint()
+                self.save_checkpoint(data_type=data_type)
 
             if self.iter_step % self.val_freq == 0:
                 #self.validate_image(data_type=data_type)
@@ -589,30 +614,46 @@ class Runner:
 
         logging.info("End")
 
-    def load_checkpoint_NIR(self, checkpoint_name):
+    def load_checkpoint_NIR(self, rgb_checkpoint_name, nir_checkpoint_name):
         print('loading sdf from RGB part')
-        checkpoint = torch.load(
-            os.path.join(self.rgb_exp_dir, "checkpoints", checkpoint_name),
-            map_location=self.device,
-        )
-        #self.nerf_outside.load_state_dict(checkpoint["nerf"])
+        checkpoint = torch.load(os.path.join(self.rgb_exp_dir, "checkpoints", rgb_checkpoint_name),
+                                map_location=self.device)
         self.sdf_network.load_state_dict(checkpoint["sdf_network_fine"])
+
+        checkpoint = torch.load(os.path.join(self.base_exp_dir, "checkpoints", nir_checkpoint_name),
+                                map_location=self.device)
+        print('loading other network from NIR models')
+        self.nir_nerf_outside.load_state_dict(checkpoint["nerf"])
+        #self.nir_nerf_outside.load_state_dict
+
         self.deviation_network.load_state_dict(checkpoint["variance_network_fine"])
-        #self.color_network.load_state_dict(checkpoint["color_network_fine"])
-        #self.optimizer.load_state_dict(checkpoint["optimizer"])
+        self.nir_network.load_state_dict(checkpoint["color_network_fine"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.iter_step = checkpoint["iter_step"]
 
         logging.info("End")
 
-    def save_checkpoint(self):
-        checkpoint = {
-            "nerf": self.nerf_outside.state_dict(),
-            "sdf_network_fine": self.sdf_network.state_dict(),
-            "variance_network_fine": self.deviation_network.state_dict(),
-            "color_network_fine": self.color_network.state_dict(),
-            "optimizer": self.optimizer.state_dict(),
-            "iter_step": self.iter_step,
-        }
+    def save_checkpoint(self, data_type='rgb'):
+        if data_type == 'nir':
+            checkpoint = {
+                "nerf": self.nir_nerf_outside.state_dict(),
+                "sdf_network_fine": self.sdf_network.state_dict(),
+                "variance_network_fine": self.deviation_network.state_dict(),
+                "color_network_fine": self.nir_network.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "iter_step": self.iter_step,
+            }
+        elif data_type == 'rgb':
+            checkpoint = {
+                "nerf": self.nerf_outside.state_dict(),
+                "sdf_network_fine": self.sdf_network.state_dict(),
+                "variance_network_fine": self.deviation_network.state_dict(),
+                "color_network_fine": self.color_network.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "iter_step": self.iter_step,
+            }
+        else:
+            print('data_type:', data_type)
 
         os.makedirs(os.path.join(self.base_exp_dir, "checkpoints"), exist_ok=True)
         torch.save(

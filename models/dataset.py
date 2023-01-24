@@ -828,14 +828,15 @@ def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_d
         if x.endswith('exr'):
             imreader = exr_reader('pyexr')
             imwriter = exr_writer('pyexr')
-    if len(masklist) > 0:
-        x = masklist[0]
-        if x.endswith('png') or x.endswith('jpg'):
-            maskreader = image_reader('opencv')
-            maskwriter = image_writer('opencv')
-        if x.endswith('exr'):
-            maskreader = exr_reader('pyexr')
-            maskwriter = exr_writer('pyexr')
+    if use_mask:
+        if len(masklist) > 0:
+            x = masklist[0]
+            if x.endswith('png') or x.endswith('jpg'):
+                maskreader = image_reader('opencv')
+                maskwriter = image_writer('opencv')
+            if x.endswith('exr'):
+                maskreader = exr_reader('pyexr')
+                maskwriter = exr_writer('pyexr')
 
     # load file from folder image
     for i, x in enumerate(imglist):
