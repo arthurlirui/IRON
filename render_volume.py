@@ -123,17 +123,17 @@ class Runner:
         # Load checkpoint
         latest_model_name = None
         if is_continue:
-            print(os.path.join(self.rgb_exp_dir, "checkpoints"))
-            print(os.path.join(self.base_exp_dir, "checkpoints"))
+            print(os.path.join(self.rgb_exp_dir, 'checkpoints'))
+            print(os.path.join(self.base_exp_dir, 'checkpoints'))
             os.makedirs(os.path.join(self.rgb_exp_dir), exist_ok=True)
-            os.makedirs(os.path.join(self.rgb_exp_dir, "checkpoints"), exist_ok=True)
+            os.makedirs(os.path.join(self.rgb_exp_dir, 'checkpoints'), exist_ok=True)
             os.makedirs(os.path.join(self.base_exp_dir), exist_ok=True)
-            os.makedirs(os.path.join(self.base_exp_dir, "checkpoints"), exist_ok=True)
+            os.makedirs(os.path.join(self.base_exp_dir, 'checkpoints'), exist_ok=True)
             if self.dataset.enable_NIR:
-                model_list_raw = os.listdir(os.path.join(self.rgb_exp_dir, "checkpoints"))
+                model_list_raw = os.listdir(os.path.join(self.rgb_exp_dir, 'checkpoints'))
                 model_list = []
                 for model_name in model_list_raw:
-                    if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
+                    if model_name[-3:] == "pth":
                         model_list.append(model_name)
                 model_list.sort()
                 if len(model_list) > 0:
@@ -141,10 +141,10 @@ class Runner:
                 else:
                     latest_rgb_model_name = None
 
-                model_list_raw = os.listdir(os.path.join(self.base_exp_dir, "checkpoints"))
+                model_list_raw = os.listdir(os.path.join(self.base_exp_dir, 'checkpoints'))
                 model_list = []
                 for model_name in model_list_raw:
-                    if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
+                    if model_name[-3:] == "pth":
                         model_list.append(model_name)
                 model_list.sort()
                 if len(model_list) > 0:
@@ -157,7 +157,7 @@ class Runner:
                                          nir_checkpoint_name=latest_nir_model_name)
 
             if self.dataset.enable_RGB:
-                model_list_raw = os.listdir(os.path.join(self.base_exp_dir, "checkpoints"))
+                model_list_raw = os.listdir(os.path.join(self.base_exp_dir, 'checkpoints'))
                 model_list = []
                 for model_name in model_list_raw:
                     if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
