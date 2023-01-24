@@ -159,7 +159,10 @@ class Runner:
                     if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
                         model_list.append(model_name)
                 model_list.sort()
-                latest_model_name = model_list[-1]
+                if len(model_list) > 0:
+                    latest_model_name = model_list[-1]
+                else:
+                    latest_model_name = None
                 if latest_model_name is not None:
                     logging.info("Find checkpoint: {}".format(latest_model_name))
                     self.load_checkpoint(latest_model_name)
