@@ -123,6 +123,8 @@ class Runner:
         # Load checkpoint
         latest_model_name = None
         if is_continue:
+            print(os.path.join(self.rgb_exp_dir, "checkpoints"))
+            print(os.path.join(self.base_exp_dir, "checkpoints"))
             if self.dataset.enable_NIR:
                 model_list_raw = os.listdir(os.path.join(self.rgb_exp_dir, "checkpoints"))
                 model_list = []
@@ -145,7 +147,7 @@ class Runner:
                     latest_nir_model_name = model_list[-1]
                 else:
                     latest_nir_model_name = None
-                logging.info("Find checkpoint: rgb{} nir{}".format(latest_rgb_model_name, latest_nir_model_name))
+                logging.info("Find checkpoint: rgb{}, nir{}".format(latest_rgb_model_name, latest_nir_model_name))
                 #if latest_rgb_model_name is not None and latest_nir_model_name is not None:
                 self.load_checkpoint_NIR(rgb_checkpoint_name=latest_rgb_model_name,
                                          nir_checkpoint_name=latest_nir_model_name)
