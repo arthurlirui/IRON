@@ -28,31 +28,19 @@ class Runner:
         self.conf_path = conf_path
         conf_text = None
         with open(self.conf_path) as f:
-            #f = open(self.conf_path)
             conf_text = f.read()
             conf_text = conf_text.replace("CASE_NAME", case)
-        #f.close()
         print(conf_text)
         self.conf = ConfigFactory.parse_string(conf_text)
         self.conf["dataset.data_dir"] = self.conf["dataset.data_dir"].replace("CASE_NAME", case)
         self.conf['dataset']['rgb_dir'] = self.conf['dataset']['rgb_dir'].replace("CASE_NAME", rgb_case)
         self.conf['dataset']['nir_dir'] = self.conf['dataset']['nir_dir'].replace("CASE_NAME", nir_case)
-        #self.conf["dataset.rgb_dir"] = self.conf['dataset']['rgb_dir']
-        #self.conf["dataset.nir_dir"] = self.conf['dataset']['nir_dir']
         self.base_exp_dir = self.conf["general.base_exp_dir"]
         self.rgb_exp_dir = self.conf["general.rgb_exp_dir"]
         os.makedirs(self.rgb_exp_dir, exist_ok=True)
         os.makedirs(self.base_exp_dir, exist_ok=True)
 
         self.dataset = DatasetNIRRGB(self.conf["dataset"])
-        # if os.path.exists(self.conf['dataset']['rgb_dir']):
-        #     #self.rgb_dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
-        #     self.rgb_dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
-        # if os.path.exists(self.conf['dataset']['nir_dir']):
-        #     self.nir_dataset = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
-
-        #self.dataset_nir = DatasetNIRRGB(self.conf["dataset"], dataset_type='nir')
-        #self.dataset_rgb = DatasetNIRRGB(self.conf["dataset"], dataset_type='rgb')
         self.iter_step = 0
 
         # Training parameters
@@ -130,56 +118,18 @@ class Runner:
             os.makedirs(os.path.join(self.base_exp_dir), exist_ok=True)
             os.makedirs(os.path.join(self.base_exp_dir, 'checkpoints'), exist_ok=True)
             if self.dataset.enable_NIR:
-                model_list_raw = os.listdir(os.path.join(self.rgb_exp_dir, 'checkpoints'))
-                model_list = []
-                for model_name in model_list_raw:
-                    if model_name[-3:] == "pth":
-                        model_list.append(model_name)
-                model_list.sort()
-                if len(model_list) > 0:
-                    latest_rgb_model_name = model_list[-1]
-                else:
-                    latest_rgb_model_name = None
-
-                model_list_raw = os.listdir(os.path.join(self.base_exp_dir, 'checkpoints'))
-                model_list = []
-                for model_name in model_list_raw:
-                    if model_name[-3:] == "pth":
-                        model_list.append(model_name)
-                model_list.sort()
-                if len(model_list) > 0:
-                    latest_nir_model_name = model_list[-1]
-                else:
-                    latest_nir_model_name = None
+                latest_rgb_model_name = self.search_model_name(self.rgb_exp_dir)
+                latest_nir_model_name = self.search_model_name(self.base_exp_dir)
                 logging.info("Find checkpoint: rgb{}, nir{}".format(latest_rgb_model_name, latest_nir_model_name))
                 #if latest_rgb_model_name is not None and latest_nir_model_name is not None:
-                self.load_checkpoint_NIR(rgb_checkpoint_name=latest_rgb_model_name,
-                                         nir_checkpoint_name=latest_nir_model_name)
+                self.load_checkpoint_NIR(rgb_checkpoint_name=latest_rgb_model_name, nir_checkpoint_name=latest_nir_model_name)
 
             if self.dataset.enable_RGB:
-                model_list_raw = os.listdir(os.path.join(self.base_exp_dir, 'checkpoints'))
-                model_list = []
-                for model_name in model_list_raw:
-                    if model_name[-3:] == "pth" and int(model_name[5:-4]) <= self.end_iter:
-                        model_list.append(model_name)
-                model_list.sort()
-                if len(model_list) > 0:
-                    latest_model_name = model_list[-1]
-                else:
-                    latest_model_name = None
+                latest_model_name = self.search_model_name(self.rgb_exp_dir)
                 if latest_model_name is not None:
                     logging.info("Find checkpoint: {}".format(latest_model_name))
                     self.load_checkpoint(latest_model_name)
 
-        # if latest_model_name is not None:
-        #     logging.info("Find checkpoint: {}".format(latest_model_name))
-        #     if self.dataset.enable_NIR:
-        #         self.load_checkpoint_NIR(rgb_checkpoint_name=rgb_models_name,
-        #                                  nir_checkpoint_name=latest_model_name)
-        #     if self.dataset.enable_RGB:
-        #         self.load_checkpoint(latest_model_name)
-
-        # Backup codes and configs for debug
         if self.mode[:5] == "train":
             self.file_backup()
 
@@ -365,6 +315,7 @@ class Runner:
     def train_NIRRGB(self, data_type='rgb'):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
         self.update_learning_rate()
+        self.validate_image(idx=10, resolution_level=1)
         res_step = self.end_iter - self.iter_step
         res_step = 0
         if data_type == 'rgb':
@@ -476,6 +427,7 @@ class Runner:
                 #self.validate_image(data_type=data_type)
                 self.validate_image(data_type=data_type)
 
+
             if self.iter_step % self.val_mesh_freq == 0:
                 self.validate_mesh()
 
@@ -571,7 +523,7 @@ class Runner:
             if self.iter_step % self.save_freq == 0:
                 self.save_checkpoint()
 
-            if True or self.iter_step % self.val_freq == 0:
+            if self.iter_step % self.val_freq == 0:
                 self.validate_image()
 
             if self.iter_step % self.val_mesh_freq == 0:
@@ -581,6 +533,21 @@ class Runner:
 
             if self.iter_step % len(image_perm) == 0:
                 image_perm = self.get_image_perm()
+
+    def search_model_name(self, model_dir, default_model_name=None):
+        latest_model_name = None
+        if default_model_name is not None:
+            model_list_raw = os.listdir(os.path.join(model_dir, 'checkpoints'))
+            model_list = []
+            for model_name in model_list_raw:
+                if model_name[-3:] == "pth":
+                    model_list.append(model_name)
+            model_list.sort()
+            if len(model_list) > 0:
+                latest_model_name = model_list[-1]
+        else:
+            latest_model_name = default_model_name
+        return latest_model_name
 
     def get_image_perm(self):
         return torch.randperm(self.dataset.n_images)
@@ -946,6 +913,7 @@ if __name__ == "__main__":
             runner.train_NIR()
         elif os.path.basename(args.conf) == 'rgb.conf' or os.path.basename(args.conf) == 'rgb_mask.conf':
             runner.train_NIRRGB(data_type='rgb')
+            #runner.validate_image(idx=10, resolution_level=1)
         elif os.path.basename(args.conf) == 'nir.conf' or os.path.basename(args.conf) == 'nir_mask.conf':
             runner.train_NIRRGB(data_type='nir')
         elif os.path.basename(args.conf) == 'flash_rgb_real.conf':
@@ -954,6 +922,9 @@ if __name__ == "__main__":
             runner.train_NIRRGB(data_type='rgb')
         else:
             runner.train_NIRRGB(data_type='rgb')
+    elif args.mode == "validata_image":
+        runner.train_NIRRGB(data_type='rgb')
+        #runner.validate_image(idx=10, resolution_level=1)
     elif args.mode == "validate_mesh":
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
     elif args.mode.startswith("interpolate"):  # Interpolate views given two image indices

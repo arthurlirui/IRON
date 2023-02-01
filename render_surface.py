@@ -628,7 +628,8 @@ for global_step in tqdm.tqdm(range(start_step + 1, args.num_iters)):
     if renderer_name == 'multi':
         loss = img_loss + eik_loss + roughrange_loss + 0.0 * material_type_loss + 50.0 * material_sparse_loss
     if renderer_name == 'comp':
-        loss = img_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
+        #loss = img_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
+        loss = img_loss + eik_loss + roughrange_loss
     if renderer_name == 'ggx':
         loss = img_loss + eik_loss + roughrange_loss
     #loss = img_loss + eik_loss + roughrange_loss + 0.1 * sparse_loss + material_type_loss

@@ -127,8 +127,9 @@ if __name__ == '__main__':
         #colored_camera_dicts = [([1, 0, 0], train_cam_norm_dict)]
 
     if True:
-        dataname = 'perfume3_all'
+        dataname = 'gun_all'
         base_dir = f'/home/lir0b/Code/NeuralRep/NIR-3Drec/data_nir_all/{dataname}'
+        #base_dir = f'/home/lir0b/Code/NeuralRep/NIR-3Drec/data_nir/{dataname}/train'
         #train_cam_dict = json.load(open(os.path.join(base_dir, 'cam_dict.json')))
         #train_cam_norm_dict = json.load(open(os.path.join(base_dir, 'cam_dict_norm.json')))
 
