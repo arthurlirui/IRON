@@ -371,15 +371,8 @@ class Runner:
             weight_max = render_out["weight_max"]
             weight_sum = render_out["weight_sum"]
             pred_rgb = color_fine[..., :3]
-            #pred_nir = color_fine[..., 3:6]
             # Loss
             color_error = (pred_rgb - true_rgb) * mask
-            # if data_type == 'rgb':
-            #     color_error = (pred_rgb - true_rgb) * mask
-            # elif data_type == 'nir':
-            #     color_error = (pred_nir - true_rgb) * mask
-            # else:
-            #     pass
 
             # previous
             color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
@@ -426,7 +419,6 @@ class Runner:
             if self.iter_step % self.val_freq == 0:
                 #self.validate_image(data_type=data_type)
                 self.validate_image(data_type=data_type)
-
 
             if self.iter_step % self.val_mesh_freq == 0:
                 self.validate_mesh()
@@ -536,7 +528,7 @@ class Runner:
 
     def search_model_name(self, model_dir, default_model_name=None):
         latest_model_name = None
-        if default_model_name is not None:
+        if default_model_name is None:
             model_list_raw = os.listdir(os.path.join(model_dir, 'checkpoints'))
             model_list = []
             for model_name in model_list_raw:
@@ -715,10 +707,6 @@ class Runner:
         RGB_fine = None
         NIR_fine = None
         if len(out_rgb_fine) > 0:
-            #img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 4, -1]) * 256).clip(0, 255)
-            #RGB_fine = img_fine[:, :, 0:3, :]
-            #NIR_fine = img_fine[:, :, 3:4, :]
-            #img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
             if data_type == 'rgb':
                 img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
             if data_type == 'nir':
@@ -760,33 +748,11 @@ class Runner:
                 img = np.concatenate([img_fine[..., i], imggt], axis=0).astype('uint8')
                 #print(img.shape)
                 self.dataset.image_writer(img_path, img)
-                # cv.imwrite(
-                #     os.path.join(
-                #         self.base_exp_dir,
-                #         "validations_fine",
-                #         "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx),
-                #     ),
-                #
-                #     np.concatenate(
-                #         [
-                #             img_fine[..., i],
-                #             self.dataset.image_at(idx, resolution_level=resolution_level)[:, :, :3],
-                #         ]
-                #     ),
-                # )
             if len(out_normal_fine) > 0:
                 normal_path = os.path.join(self.base_exp_dir,
                                            "normals",
                                            "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
                 self.dataset.image_writer(normal_path, normal_img[..., i].astype('uint8'))
-                # cv.imwrite(
-                #     os.path.join(
-                #         self.base_exp_dir,
-                #         "normals",
-                #         "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx),
-                #     ),
-                #     normal_img[..., i],
-                # )
 
     def render_novel_image(self, idx_0, idx_1, ratio, resolution_level):
         """
