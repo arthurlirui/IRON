@@ -733,9 +733,9 @@ class Runner:
         #print(normal_img.shape, img_fine.shape)
         for i in range(img_fine.shape[-1]):
             if len(out_rgb_fine) > 0:
-                if False:
-                    print(img_fine[..., i].shape)
-                    print(self.dataset.image_at(idx, resolution_level=resolution_level).shape)
+                # if False:
+                #     print(img_fine[..., i].shape)
+                #     print(self.dataset.image_at(idx, resolution_level=resolution_level).shape)
                 img_path = os.path.join(
                     self.base_exp_dir,
                     "validations_fine",
@@ -889,9 +889,10 @@ if __name__ == "__main__":
         else:
             runner.train_NIRRGB(data_type='rgb')
     elif args.mode == "validata_image":
-        runner.train_NIRRGB(data_type='rgb')
-        #runner.validate_image(idx=10, resolution_level=1)
+        #runner.train_NIRRGB(data_type='rgb')
+        runner.validate_image(idx=10, resolution_level=1)
     elif args.mode == "validate_mesh":
+        #runner.train_NIRRGB(data_type='rgb')
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
     elif args.mode.startswith("interpolate"):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split("_")
