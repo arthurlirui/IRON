@@ -353,6 +353,8 @@ ckpt_fpaths_nir = glob.glob(os.path.join(args.nir_dir, "ckpt_*.pth"))
 
 def load_ckpt(ckpt_path):
     ckpt_fpaths = glob.glob(os.path.join(ckpt_path, "ckpt_*.pth"))
+    ckpt = None
+    start_step = 0
     if len(ckpt_fpaths) > 0:
         path2step = lambda x: int(os.path.basename(x)[len("ckpt_"): -4])
         ckpt_fpaths = sorted(ckpt_fpaths, key=path2step)
@@ -389,7 +391,7 @@ if len(ckpt_fpaths) > 0:
     for x in list(color_network_dict.keys()):
         if x in ckpt:
             #print(x)
-            if args.train_rgb:
+            if args.train_nir:
                 if not network_enable[x]:
                     color_network_dict[x].load_state_dict(ckpt_nir[x])
             else:
@@ -440,9 +442,13 @@ def export_mesh_and_materials(export_out_dir, sdf_network, color_network_dict):
         def forward(self, points):
             _, features, normals = self.sdf_network.get_all(points, is_training=False)
             normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
-            diffuse_albedo, specular_albedo, specular_roughness = get_materials_multi(
-                color_network_dict, points, normals, features
-            )
+            if False:
+                diffuse_albedo, specular_albedo, specular_roughness = get_materials_multi(color_network_dict, points, normals, features)
+            if True:
+                res = get_materials_comp(color_network_dict, points, normals, features)
+                diffuse_albedo = res['diffuse_albedo']
+                specular_albedo = res['specular_albedo']
+                specular_roughness = res['specular_roughness']
             return diffuse_albedo, specular_albedo, specular_roughness
 
     ic("Exporting materials...")
