@@ -789,6 +789,87 @@ def to8b(x):
     return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)
 
 
+def load_dataset_general(data_dir, folder_name='images', file_name='cam_dict.json', use_mask=True, use_trans=False):
+    parpath = os.path.dirname(data_dir)
+    #rgbpath = os.path.join(parpath, 'rgb')
+    #nirpath = os.path.join(parpath, 'nir')
+    imglist = sorted(glob.glob(os.path.join(data_dir, folder_name, '*.*')))
+    imreader = None
+    if len(imglist) > 0:
+        x = imglist[0]
+        if x.endswith('png') or x.endswith('jpg'):
+            imreader = image_reader('opencv')
+        if x.endswith('exr'):
+            imreader = exr_reader('pyexr')
+
+    maskreader = None
+    if use_mask:
+        maskpath = os.path.join(data_dir, 'masks')
+        masklist = []
+        if os.path.exists(maskpath):
+            masklist = sorted(glob.glob(os.path.join(maskpath, '*.*')))
+        if len(masklist) > 0:
+            x = masklist[0]
+            if x.endswith('png') or x.endswith('jpg'):
+                maskreader = image_reader('opencv')
+            if x.endswith('exr'):
+                maskreader = exr_reader('pyexr')
+
+    with open(os.path.join(parpath, file_name)) as f:
+        cam_dict = json.load(f)
+
+    #use_trans = False
+    if use_trans:
+        target_radius = 1.0
+        with open(os.path.join(parpath, file_name)) as f:
+            rgb_cam_dict = json.load(f)
+        #with open(os.path.join(parpath, file_name)) as f:
+        #    nir_cam_dict = json.load(f)
+        translate, scale = get_tf_cams(rgb_cam_dict, target_radius=target_radius)
+
+    image_fpaths = []
+    gt_images = []
+    mask_images = []
+    Ks = []
+    W2Cs = []
+
+    for i, x in enumerate(imglist):
+        filename = os.path.basename(x)
+        if filename.endswith('png') or filename.endswith('jpg'):
+            im = imreader(x) / 255.0
+        if filename.endswith('exr'):
+            im = imreader(x)
+        if im.shape[-1] == 1:
+            im = np.concatenate([im, im, im], axis=-1)
+
+        fpath = x
+
+        if use_mask:
+            maski = maskreader(masklist[i]) / 255.0
+            h, w, d = im.shape
+            if d == 1:
+                im[maski[:, :, 0] < 0.1] = 0
+            else:
+                im[maski < 0.1] = 0
+
+        if not filename in cam_dict:
+            continue
+        K = np.array(cam_dict[filename]["K"]).reshape((4, 4)).astype(np.float32)
+        W2C = np.array(cam_dict[filename]["W2C"]).reshape((4, 4)).astype(np.float32)
+
+        if use_trans:
+            W2C = transform_pose(W2C, translate, scale)
+
+        image_fpaths.append(fpath)
+        gt_images.append(torch.from_numpy(im))
+        Ks.append(torch.from_numpy(K))
+        W2Cs.append(torch.from_numpy(W2C))
+    gt_images = torch.stack(gt_images, dim=0)
+    Ks = torch.stack(Ks, dim=0)
+    W2Cs = torch.stack(W2Cs, dim=0)
+    return image_fpaths, gt_images, Ks, W2Cs
+
+
 def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_dict.json', use_mask=True):
     parpath = os.path.dirname(datadir)
     rgbpath = os.path.join(parpath, 'rgb')
