@@ -1,15 +1,22 @@
 import os
 
+import numpy
 import numpy as np
 import torch
 
 
 def gamma_correction(image, gamma=2.2):
-    return torch.pow(image + 1e-6, 1.0 / gamma)
+    try:
+        return np.power(image + 1e-6, 1.0 / gamma)
+    except:
+        return torch.pow(image + 1e-6, 1.0 / gamma)
 
 
 def inv_gamma_correction(image, gamma=2.2):
-    return torch.pow(image, gamma)
+    try:
+        return np.power(image + 1e-6, gamma)
+    except:
+        return torch.pow(image + 1e-6, gamma)
 
 
 def concatenate_result(image_list=[], imarray_length=3):

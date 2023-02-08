@@ -77,7 +77,7 @@ class ModelBed:
                                                 sdf_network=self.sdf_network,
                                                 color_network_dict=self.color_network_dict)
         self.start_step = start_step
-        self.pyramid_loss_fn = PyramidL2Loss(use_cuda=self.use_cuda)
+        self.pyramidl2_loss_fn = PyramidL2Loss(use_cuda=self.use_cuda)
         self.ssim_loss_fn = ssim_loss_fn
 
         # download blender
@@ -169,6 +169,22 @@ class ModelBed:
             normals_pad[interior_mask] = normals
             metallic[interior_mask] = params['metallic']
             dielectric[interior_mask] = params['dielectric']
+        return {
+            "color": rgb,
+            "diffuse_color": diffuse_rgb,
+            "specular_color": specular_rgb,
+            "diffuse_albedo": diffuse_albedo,
+            "specular_albedo": specular_albedo,
+            "specular_roughness": specular_roughness,
+            "metallic_eta": metallic_eta,
+            "metallic_k": metallic_k,
+            "dielectric_eta": dielectric_eta,
+            "normal": normals_pad,
+            "metallic_rgb": metallic_rgb,
+            "metallic": metallic,
+            "dielectric_rgb": dielectric_rgb,
+            "dielectric": dielectric
+        }
 
     def set_raytracer(self, raytracer=None):
         self.raytracer = raytracer
@@ -330,7 +346,7 @@ class ModelBed:
                     metal_eta, metal_k, dielectric_eta]
         im = concatenate_result(image_list=img_list, imarray_length=3)
         file_name = f"logim_{global_step}_{os.path.basename(self.image_fpaths[idx])}.png"
-        self.imwriter(os.path.join(self.args.out_dir, file_name, to8b(im)))
+        self.imwriter(os.path.join(self.args.out_dir, file_name), to8b(im))
 
     def train(self):
         fill_holes = self.fill_holes
@@ -416,7 +432,7 @@ class ModelBed:
                 roughness_value = 0.5
                 roughness = roughness[roughness > roughness_value]
                 if roughness.numel() > 0:
-                    roughrange_loss = (roughness - roughness_value).mean() * args.roughrange_weight
+                    roughrange_loss = (roughness - roughness_value).mean() * self.args.roughrange_weight
 
                 # calculate metallic eta k loss
                 if 'metallic_eta' in results:

@@ -33,7 +33,8 @@ from models.dataset import to8b, load_dataset_NIRRGB, load_datadir, load_dataset
 from models.helper import gamma_correction, inv_gamma_correction
 from models.dataset import image_writer, image_reader
 from models.network_conf import choose_optmizer, choose_renderer, choose_renderer_func
-
+from utils.ckpt_loader import load_ckpt, load_neus_checkpoint, load_pretrained_checkpoint, download_blender
+from utils.process_routine import render_all
 #from torchmetrics.functional import image_gradients
 ###### arguments
 
@@ -326,95 +327,92 @@ imwriter = image_writer('opencv')
 
 ###### initialization using neus
 ic(args.neus_ckpt_fpath)
-if os.path.isfile(args.neus_ckpt_fpath):
-    ic(f"Loading from neus checkpoint: {args.neus_ckpt_fpath}")
-    ckpt = torch.load(args.neus_ckpt_fpath, map_location=torch.device("cuda"))
-    try:
-        sdf_network.load_state_dict(ckpt["sdf_network_fine"])
-        if args.train_nir:
-            # load sdf only, train albedo, roughness and refractive index for NIR
-            #color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
-            pass
-        elif args.train_rgb:
-            # load sdf, train diffuse albedo and specular albedo for RGB images
-            color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
-            #color_network_dict["specular_albedo_network"].load_state_dict(ckpt["color_network_fine"])
-    except:
-        traceback.print_exc()
-        # ic("Failed to initialize diffuse_albedo_network from checkpoint: ", args.neus_ckpt_fpath)
+load_neus_checkpoint(neus_ckpt_fpath=args.neus_ckpt_fpath,
+                     sdf_network=sdf_network,
+                     color_network_dict=color_network_dict,
+                     load_diffuse_albedo=True)
+
+# if os.path.isfile(args.neus_ckpt_fpath):
+#     ic(f"Loading from neus checkpoint: {args.neus_ckpt_fpath}")
+#     ckpt = torch.load(args.neus_ckpt_fpath, map_location=torch.device("cuda"))
+#     try:
+#         sdf_network.load_state_dict(ckpt["sdf_network_fine"])
+#         if args.train_nir:
+#             # load sdf only, train albedo, roughness and refractive index for NIR
+#             #color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+#             pass
+#         elif args.train_rgb:
+#             # load sdf, train diffuse albedo and specular albedo for RGB images
+#             color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+#             #color_network_dict["specular_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+#     except:
+#         traceback.print_exc()
+#         # ic("Failed to initialize diffuse_albedo_network from checkpoint: ", args.neus_ckpt_fpath)
+
+#### init light intensity
 dist = np.median([torch.norm(cameras[i].get_camera_origin()).item() for i in range(len(cameras))])
 init_light = args.init_light_scale * dist * dist
 color_network_dict["point_light_network"].set_light(init_light)
 
 #### load pretrained checkpoints
-start_step = -1
-ckpt_fpaths = glob.glob(os.path.join(args.out_dir, "ckpt_*.pth"))
-ckpt_fpaths_nir = glob.glob(os.path.join(args.nir_dir, "ckpt_*.pth"))
-
-def load_ckpt(ckpt_path):
-    ckpt_fpaths = glob.glob(os.path.join(ckpt_path, "ckpt_*.pth"))
-    ckpt = None
-    start_step = 0
-    if len(ckpt_fpaths) > 0:
-        path2step = lambda x: int(os.path.basename(x)[len("ckpt_"): -4])
-        ckpt_fpaths = sorted(ckpt_fpaths, key=path2step)
-        ckpt_fpath = ckpt_fpaths[-1]
-        start_step = path2step(ckpt_fpath)
-        ic("Reloading from checkpoint: ", ckpt_fpath)
-        ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
-    return ckpt, start_step
-
-if len(ckpt_fpaths) > 0:
-    # path2step = lambda x: int(os.path.basename(x)[len("ckpt_"): -4])
-    # ckpt_fpaths = sorted(ckpt_fpaths, key=path2step)
-    # ckpt_fpath = ckpt_fpaths[-1]
-    # start_step = path2step(ckpt_fpath)
-    # ic("Reloading from checkpoint: ", ckpt_fpath)
-    # ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
-
-    ckpt, start_step = load_ckpt(ckpt_path=args.out_dir)
-    ckpt_nir, start_step2 = load_ckpt(ckpt_path=args.nir_dir)
-
-    sdf_network.load_state_dict(ckpt["sdf_network"])
-
-    if args.train_rgb:
-        network_enable = {'color_network': True, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
-                          'point_light_network': True,
-                          'metallic_network': False, 'dielectric_network': False, 'specular_roughness_network': False,
-                          'metallic_eta_network': False, 'metallic_k_network': False, 'dielectric_eta_network': False}
-
-    if args.train_nir:
-        network_enable = {'color_network': True, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
-                          'point_light_network': True,
-                          'metallic_network': False, 'dielectric_network': False, 'specular_roughness_network': True,
-                          'metallic_eta_network': True, 'metallic_k_network': True, 'dielectric_eta_network': True}
-    for x in list(color_network_dict.keys()):
-        if x in ckpt:
-            #print(x)
-            if args.train_nir:
-                if not network_enable[x]:
-                    color_network_dict[x].load_state_dict(ckpt_nir[x])
-            else:
-                color_network_dict[x].load_state_dict(ckpt[x])
-
-            if not network_enable[x]:
-                print(x)
-                for para in color_network_dict[x].parameters():
-                    para.requires_grad = False
+start_step = load_pretrained_checkpoint(ckpt_dir=args.out_dir,
+                                        sdf_network=sdf_network,
+                                        color_network_dict=color_network_dict)
+# start_step = -1
+# ckpt_fpaths = glob.glob(os.path.join(args.out_dir, "ckpt_*.pth"))
+# ckpt_fpaths_nir = glob.glob(os.path.join(args.nir_dir, "ckpt_*.pth"))
+#
+# if len(ckpt_fpaths) > 0:
+#     # path2step = lambda x: int(os.path.basename(x)[len("ckpt_"): -4])
+#     # ckpt_fpaths = sorted(ckpt_fpaths, key=path2step)
+#     # ckpt_fpath = ckpt_fpaths[-1]
+#     # start_step = path2step(ckpt_fpath)
+#     # ic("Reloading from checkpoint: ", ckpt_fpath)
+#     # ckpt = torch.load(ckpt_fpath, map_location=torch.device("cuda"))
+#
+#     ckpt, start_step = load_ckpt(ckpt_path=args.out_dir)
+#     ckpt_nir, start_step2 = load_ckpt(ckpt_path=args.nir_dir)
+#
+#     sdf_network.load_state_dict(ckpt["sdf_network"])
+#
+#     if args.train_rgb:
+#         network_enable = {'color_network': True, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
+#                           'point_light_network': True,
+#                           'metallic_network': False, 'dielectric_network': False, 'specular_roughness_network': False,
+#                           'metallic_eta_network': False, 'metallic_k_network': False, 'dielectric_eta_network': False}
+#
+#     if args.train_nir:
+#         network_enable = {'color_network': True, 'diffuse_albedo_network': True, 'specular_albedo_network': True,
+#                           'point_light_network': True,
+#                           'metallic_network': False, 'dielectric_network': False, 'specular_roughness_network': True,
+#                           'metallic_eta_network': True, 'metallic_k_network': True, 'dielectric_eta_network': True}
+#     for x in list(color_network_dict.keys()):
+#         if x in ckpt:
+#             if args.train_nir:
+#                 if not network_enable[x]:
+#                     color_network_dict[x].load_state_dict(ckpt_nir[x])
+#             else:
+#                 color_network_dict[x].load_state_dict(ckpt[x])
+#
+#             if not network_enable[x]:
+#                 print(x)
+#                 for para in color_network_dict[x].parameters():
+#                     para.requires_grad = False
 
     # logim_names = [os.path.basename(x) for x in glob.glob(os.path.join(args.out_dir, "logim_*.png"))]
     # start_step = sorted([int(x[len("logim_") : -4]) for x in logim_names])[-1]
 ic(dist, color_network_dict["point_light_network"].light.data)
 ic(start_step)
 
-
 ###### export mesh and materials
 blender_fpath = "./blender-3.1.0-linux-x64/blender"
-if not os.path.isfile(blender_fpath):
-    os.system(
-        "wget https://mirror.clarkson.edu/blender/release/Blender3.1/blender-3.1.0-linux-x64.tar.xz && \
-             tar -xvf blender-3.1.0-linux-x64.tar.xz"
-    )
+download_blender()
+# blender_fpath = "./blender-3.1.0-linux-x64/blender"
+# if not os.path.isfile(blender_fpath):
+#     cmd_str = "wget https://mirror.clarkson.edu/blender/release/Blender3.1/blender-3.1.0-linux-x64.tar.xz"
+#     cmd_str += "&& tar -xvf blender-3.1.0-linux-x64.tar.xz"
+#     #os.system("wget https://mirror.clarkson.edu/blender/release/Blender3.1/blender-3.1.0-linux-x64.tar.xz && tar -xvf blender-3.1.0-linux-x64.tar.xz")
+#     os.system(cmd_str)
 
 
 def export_mesh_and_materials(export_out_dir, sdf_network, color_network_dict):
@@ -471,43 +469,52 @@ if args.render_all:
     render_out_dir = os.path.join(args.out_dir, f"render_{os.path.basename(args.data_dir)}_{start_step}")
     os.makedirs(render_out_dir, exist_ok=True)
     ic(f"Rendering images to: {render_out_dir}")
-    n_cams = len(cameras)
-    for i in tqdm.tqdm(range(n_cams)):
-        cam, impath = cameras[i], image_fpaths[i]
-        results = render_camera(
-            cam,
-            sdf_network,
-            raytracer,
-            color_network_dict,
-            render_fn=render_fn,
-            fill_holes=True,
-            handle_edges=True,
-            is_training=False,
-        )
-        if args.gamma_pred:
-            results["color"] = gamma_correction(results["color"], gamma=2.2)
-            results["diffuse_color"] = gamma_correction(results["diffuse_color"], gamma=2.2)
-            #results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
-            #results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
-            results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
-        for x in list(results.keys()):
-            results[x] = results[x].detach().cpu().numpy()
-        color_im = results["color"]
-        timgname = os.path.basename(impath).split('.')[0]
-        #imageio.imwrite(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
-        imwriter(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
+    render_all(out_dir=render_out_dir,
+               cameras=cameras,
+               raytracer=raytracer,
+               image_fpaths=image_fpaths,
+               sdf_network=sdf_network,
+               color_network_dict=color_network_dict,
+               render_fn=render_fn,
+               gamma_pred=args.gamma_pred)
 
-        normal = results["normal"]
-        normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
-        normal_im = (normal + 1.0) / 2.0
-        #imageio.imwrite(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
-        imwriter(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
-        diff_im = results["diffuse_color"]
-        #imageio.imwrite(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
-        imwriter(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
-        specular_im = results["specular_color"]
-        #imageio.imwrite(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
-        imwriter(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
+    # n_cams = len(cameras)
+    # for i in tqdm.tqdm(range(n_cams)):
+    #     cam, impath = cameras[i], image_fpaths[i]
+    #     results = render_camera(
+    #         cam,
+    #         sdf_network,
+    #         raytracer,
+    #         color_network_dict,
+    #         render_fn=render_fn,
+    #         fill_holes=True,
+    #         handle_edges=True,
+    #         is_training=False,
+    #     )
+    #     if args.gamma_pred:
+    #         results["color"] = gamma_correction(results["color"], gamma=2.2)
+    #         results["diffuse_color"] = gamma_correction(results["diffuse_color"], gamma=2.2)
+    #         #results["color"] = torch.pow(results["color"] + 1e-6, 1.0 / 2.2)
+    #         #results["diffuse_color"] = torch.pow(results["diffuse_color"] + 1e-6, 1.0 / 2.2)
+    #         results["specular_color"] = torch.clamp(results["color"] - results["diffuse_color"], min=0.0)
+    #     for x in list(results.keys()):
+    #         results[x] = results[x].detach().cpu().numpy()
+    #     color_im = results["color"]
+    #     timgname = os.path.basename(impath).split('.')[0]
+    #     #imageio.imwrite(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
+    #     imwriter(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
+    #
+    #     normal = results["normal"]
+    #     normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
+    #     normal_im = (normal + 1.0) / 2.0
+    #     #imageio.imwrite(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
+    #     imwriter(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
+    #     diff_im = results["diffuse_color"]
+    #     #imageio.imwrite(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
+    #     imwriter(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
+    #     specular_im = results["specular_color"]
+    #     #imageio.imwrite(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
+    #     imwriter(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
     exit(0)
 
 ###### training

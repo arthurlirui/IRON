@@ -315,7 +315,7 @@ class Runner:
     def train_NIRRGB(self, data_type='rgb'):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
         self.update_learning_rate()
-        self.validate_image(idx=10, resolution_level=1)
+        self.validate_image(idx=10, resolution_level=4, data_type=data_type)
         res_step = self.end_iter - self.iter_step
         res_step = 0
         if data_type == 'rgb':
