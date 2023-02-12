@@ -129,12 +129,7 @@ class GGXColocatedRenderer(nn.Module):
         t_idx = ty * self.num_theta_samples + tx
 
         dots_sh = list(t_idx.shape[:-1])
-        data = self.MTS_TRANS.view([1,] * len(dots_sh) + [-1,]).expand(
-            dots_sh
-            + [
-                -1,
-            ]
-        )
+        data = self.MTS_TRANS.view([1] * len(dots_sh) + [-1]).expand(dots_sh + [-1])
 
         t_idx = torch.clamp(t_idx, min=0, max=data.shape[-1] - 1).long()  # important
         T12 = torch.clamp(torch.gather(input=data, index=t_idx, dim=-1), min=0.0, max=1.0)
@@ -142,12 +137,7 @@ class GGXColocatedRenderer(nn.Module):
 
         ## compute Fdr: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/rtrans.h#L249
         t_idx = torch.floor(warpedAlpha * self.num_alpha_samples).long()
-        data = self.MTS_DIFF_TRANS.view([1,] * len(dots_sh) + [-1,]).expand(
-            dots_sh
-            + [
-                -1,
-            ]
-        )
+        data = self.MTS_DIFF_TRANS.view([1] * len(dots_sh) + [-1]).expand(dots_sh + [-1])
         t_idx = torch.clamp(t_idx, min=0, max=data.shape[-1] - 1).long()  # important
         Fdr = torch.clamp(1.0 - torch.gather(input=data, index=t_idx, dim=-1), min=0.0, max=1.0)  # [..., 1]
 
@@ -565,9 +555,6 @@ class CompositeRenderer(nn.Module):
             for k in self.MATERIAL_K:
                 self.MATERIAL_K[k] = self.MATERIAL_K[k].cuda()
 
-            #self.MATERIAL_ETA = self.MATERIAL_ETA.cuda()
-            #self.MATERIAL_K = self.MATERIAL_K.cuda()
-
     def get_eta(self, wavelength=850):
         eta = {}
         for k in self.MATERIAL_ETA:
@@ -793,7 +780,7 @@ class CompositeRenderer(nn.Module):
         G = smithG1(cos_theta_i, alpha_u) * smithG1(cos_theta_i, alpha_v)  # [..., 1]
         return G
 
-    def forward(self, light, distance, normal, viewdir, params={}):
+    def forward(self, light, distance, normal, viewdir, params={}, switch_dict={}):
         """
         light:
         distance: [..., 1]
@@ -802,24 +789,22 @@ class CompositeRenderer(nn.Module):
         alpha: [..., 1]; roughness
         params.keys() = ['anisotropic', 'roughness', 'metallic']
         """
-        #anisotropic = torch.clamp(params['anisotropic'], min=0.00001)
-        roughness = torch.clamp(params['specular_roughness'], min=0.00001)
-        #flatness = torch.clamp(params['flatness'], min=0.00001)
-        #spec_trans = torch.clamp(params['spec_trans'], min=0.00001)
-        metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
-        dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
-
+        specular_roughness = torch.clamp(params['specular_roughness'], min=0.00001)
         dielectric_eta = torch.clamp(params['dielectric_eta'], min=1.000001, max=1.999999)
         metallic_eta = torch.clamp(params['metallic_eta'], min=0.099999, max=4.999999)
         metallic_k = torch.clamp(params['metallic_k'], min=0.099999, max=9.999999)
+        specular_albedo = torch.clamp(params['specular_albedo'], min=0.00001)
+        diffuse_albedo = torch.clamp(params['diffuse_albedo'], min=0.00001)
 
+        #anisotropic = torch.clamp(params['anisotropic'], min=0.00001)
+        #flatness = torch.clamp(params['flatness'], min=0.00001)
+        #spec_trans = torch.clamp(params['spec_trans'], min=0.00001)
+        #metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
+        #dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
         #clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
         #eta = torch.clamp(params['eta'], min=0.000001)
         eta = 1.48958738
         #spec_tint = torch.clamp(params['spec_tint'], min=0.000001)
-        specular_albedo = torch.clamp(params['specular_albedo'], min=0.00001)
-        diffuse_albedo = torch.clamp(params['diffuse_albedo'], min=0.00001)
-
         #sheen = torch.clamp(params['sheen'], min=0.00001)
 
         #brdf = (1.0 - metallic)
@@ -835,7 +820,7 @@ class CompositeRenderer(nn.Module):
         #alpha_u, alpha_v = calc_dist_params(anisotropic=anisotropic, roughness=roughness, has_anisotropic=True)
         #alpha = 0.5 * (alpha_u + alpha_v)
         #F_die = fresnel_dielectric(cosThetaI=cos_theta_i, cosThetaT=cos_theta_i, eta=eta)
-        alpha_u, alpha_v = roughness, roughness
+        alpha_u, alpha_v = specular_roughness, specular_roughness
         D = self.calc_D_specular(cos_theta_i, eta)
         G = self.calc_G_specular(cos_theta_i, alpha_u, alpha_v)
 
@@ -851,16 +836,16 @@ class CompositeRenderer(nn.Module):
         light_intensity = light / (distance * distance + 1e-10)
         #specular_rgb = light_intensity * specular_albedo * F * D * G / (4.0 * cos_theta_i + 1e-10)
 
-        if False:
-            main_specular_rgb = self.main_specular_reflection(D=D,
-                                                              G=G,
-                                                              F_dielectric=F_die,
-                                                              metallic=metallic,
-                                                              spec_tint=spec_tint,
-                                                              cos_theta=cos_theta_i,
-                                                              color=specular_albedo,
-                                                              intensity=light_intensity,
-                                                              eta=eta)
+        # if False:
+        #     main_specular_rgb = self.main_specular_reflection(D=D,
+        #                                                       G=G,
+        #                                                       F_dielectric=F_die,
+        #                                                       metallic=metallic,
+        #                                                       spec_tint=spec_tint,
+        #                                                       cos_theta=cos_theta_i,
+        #                                                       color=specular_albedo,
+        #                                                       intensity=light_intensity,
+        #                                                       eta=eta)
         if True:
             eta_cu = 0.28
             k_cu = 5.4856
@@ -882,7 +867,7 @@ class CompositeRenderer(nn.Module):
         #diffuse_rgb = self.diffuse_reflection(cos_theta=cos_theta_i, alpha=1.0-roughness, diffuse_albedo=diffuse_albedo)
         diffuse_rgb = self.diffuse_reflection_ggx(light_intensity=light_intensity,
                                                   cos_theta=cos_theta_i,
-                                                  alpha=roughness,
+                                                  alpha=specular_roughness,
                                                   diffuse_albedo=diffuse_albedo)
 
         rgb = diffuse_rgb

@@ -45,18 +45,6 @@ def load_pretrained_checkpoint(ckpt_dir, sdf_network, color_network_dict, is_tra
                 color_network_dict[x].load_state_dict(ckpt[x])
     return start_step
 
-            # if x in ckpt:
-            #     if args.train_nir:
-            #         if not network_enable[x]:
-            #             color_network_dict[x].load_state_dict(ckpt_nir[x])
-            #     else:
-            #         color_network_dict[x].load_state_dict(ckpt[x])
-            #
-            #     if not network_enable[x]:
-            #         print(x)
-            #         for para in color_network_dict[x].parameters():
-            #             para.requires_grad = False
-
 
 def load_neus_checkpoint(neus_ckpt_fpath, sdf_network, color_network_dict, load_diffuse_albedo=True):
     #if os.path.isfile(args.neus_ckpt_fpath):

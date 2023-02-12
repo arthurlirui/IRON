@@ -344,7 +344,7 @@ def init_rendering_network_dict(renderer_name='comp'):
     return color_network_dict
 
 
-def choose_optmizer(renderer_name='comp', network_dict={}):
+def choose_optmizer(renderer_name='comp', network_name_list=[], network_dict={}):
     if renderer_name == 'ggx':
         color_optimizer_dict = {
             "color_network": torch.optim.Adam(network_dict["color_network"].parameters(), lr=1e-4),
@@ -376,10 +376,12 @@ def choose_optmizer(renderer_name='comp', network_dict={}):
             "metallic_eta_network": torch.optim.Adam(network_dict["metallic_eta_network"].parameters(), lr=1e-4),
             "metallic_k_network": torch.optim.Adam(network_dict["metallic_k_network"].parameters(), lr=1e-4),
             "dielectric_eta_network": torch.optim.Adam(network_dict["dielectric_eta_network"].parameters(), lr=1e-4),
-            #"clearcoat_network": torch.optim.Adam(network_dict["clearcoat_network"].parameters(), lr=1e-4),
-            #"spec_tint_network": torch.optim.Adam(network_dict["spec_tint_network"].parameters(), lr=1e-4),
-            #"anisotropic_network": torch.optim.Adam(network_dict["anisotropic_network"].parameters(), lr=1e-4)
         }
+        new_color_optimizer_dict = {}
+        if len(network_name_list) > 0:
+            for network_name in network_name_list:
+                new_color_optimizer_dict[network_name] = color_optimizer_dict[network_name]
+            color_optimizer_dict = new_color_optimizer_dict
         return color_optimizer_dict
 
 
