@@ -784,6 +784,333 @@ class DatasetNIRRGB:
         return (cv2.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255).astype(np.uint8)
 
 
+class DatasetGeneral:
+    def __init__(self, conf):
+        super(DatasetGeneral, self).__init__()
+        print("Loading General Images: Begin")
+        self.device = torch.device("cuda")
+        self.conf = conf
+
+        self.data_type = self.conf.get_string('data_type')
+        if self.data_type == 'env':
+            self.data_rgb_dir = conf.get_string('env_dir')
+        elif self.data_type == 'flash':
+            self.data_rgb_dir = conf.get_string('flash_dir')
+        elif self.data_type == 'rgb':
+            self.data_rgb_dir = conf.get_string('rgb_dir')
+        elif self.data_type == 'nir':
+            self.data_rgb_dir = conf.get_string('nir_dir')
+        else:
+            self.data_rgb_dir = conf.get_string('rgb_dir')
+
+        #self.data_nir_dir = conf.get_string('nir_dir')
+        self.data_dir = conf.get_string("data_dir")
+        self.file_type = conf.get_string("file_type")
+
+        self.render_cameras_name = conf.get_string("render_cameras_name")
+        self.object_cameras_name = conf.get_string("object_cameras_name")
+        self.camera_outside_sphere = conf.get_bool("camera_outside_sphere", default=True)
+
+        # initial image reader: use same image reader for any place
+        self.image_reader = image_reader(reader_name='opencv')
+        self.image_writer = image_writer(writer_name='opencv')
+        self.exr_reader = exr_reader(reader_name='pyexr')
+        self.exr_writer = exr_writer(writer_name='pyexr')
+        self.normal_writer = exr_writer(writer_name='pyexr')
+
+        self.camera_dict = None
+        cam_dict_filename = conf.get_string('cam_dict_filename')
+        if os.path.exists(os.path.join(self.data_dir, cam_dict_filename)):
+            with open(os.path.join(self.data_dir, cam_dict_filename)) as f:
+                camera_dict = json.load(fp=f)
+                self.camera_dict = camera_dict
+
+        # check non-exist files and remove empty keys
+        use_trans = False
+        self.scale = 1.0
+        if use_trans:
+            target_radius = 1.0
+            translate, scale = get_tf_cams(self.camera_dict, target_radius=target_radius)
+            self.translate = translate
+            self.scale = scale
+            print('scale:', scale, 'translate:', translate)
+
+        for x in list(self.camera_dict.keys()):
+            #if os.path.exists(os.path.join(self.data_rgb_dir, x)) or os.path.exists(os.path.join(self.data_nir_dir, x)):
+            if os.path.exists(os.path.join(self.data_rgb_dir, x)):
+                self.camera_dict[x]["K"] = np.array(self.camera_dict[x]["K"]).reshape((4, 4))
+                self.camera_dict[x]["W2C"] = np.array(self.camera_dict[x]["W2C"]).reshape((4, 4))
+            else:
+                self.camera_dict.pop(x, None)
+
+        for img_name in self.camera_dict:
+            W2C = np.array(self.camera_dict[img_name]['W2C']).reshape((4, 4))
+            if use_trans:
+                W2C = self.transform_pose(W2C, translate, scale)
+            assert (np.isclose(np.linalg.det(W2C[:3, :3]), 1.))
+            self.camera_dict[img_name]['W2C'] = W2C
+
+        print(self.camera_dict.keys())
+
+        self.enable_RGB = conf['enable_rgb']
+        self.enable_NIR = conf['enable_nir']
+        self.enable_ENV = conf['enable_env']
+        self.enable_FLASH = conf['enable_flash']
+        if os.path.exists(self.data_rgb_dir):
+            try:
+                #self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, f'*.{self.file_type}')))
+                self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, f'*.*')))
+                self.RGB_list = [f for f in self.RGB_list if os.path.basename(f) in self.camera_dict]
+                self.n_RGB = len(self.RGB_list)
+                self.RGB_np = np.stack([self.image_reader(im_name) for im_name in self.RGB_list]) / 255.0
+            except:
+                print("Loading png images failed; try loading exr images")
+                self.RGB_list = sorted(glob.glob(os.path.join(self.data_rgb_dir, '*.exr')))
+                self.n_RGB = len(self.RGB_list)
+                self.RGB_np = np.stack([self.exr_reader(im_name) for im_name in self.RGB_list])
+        else:
+            print("No existing RGB dataset")
+            self.enable_RGB = False
+            self.RGB_list = []
+            self.n_RGB = 0
+            self.RGB_np = None
+
+        no_mask = False
+        if no_mask:
+            print("Not using masks")
+            self.masks_lis = None
+            self.masks_RGB_np = np.ones_like(self.RGB_np)
+        else:
+            try:
+                self.masks_RGB_lis = sorted(
+                    glob.glob(os.path.join(self.data_dir, self.data_type, 'masks', f'*.{self.file_type}')))
+                self.masks_RGB_np = np.stack([self.image_reader(im_name) for im_name in self.masks_RGB_lis]) / 255.0
+            except:
+                # traceback.print_exc()
+                print("Loading mask images failed; try not using masks")
+                self.masks_lis = None
+                self.masks_np = np.ones_like(self.RGB_np)
+                self.masks_RGB_np = np.ones_like(self.RGB_np)
+
+        self.RGB_np = self.RGB_np[..., :3]
+        self.masks_RGB_np = self.masks_RGB_np[..., :3]
+
+        # scale_mat: used for coordinate normalization, we assume the scene to render is inside a unit sphere at origin.
+        self.scale_mats_np = [np.eye(4).astype(np.float32) for idx in range(self.n_RGB)]
+
+        self.intrinsics_RGB = []
+        self.pose_RGB = []
+        self.world_mats_RGB_np = []
+        for x in self.RGB_list:
+            x = os.path.basename(x)
+            K = self.camera_dict[x]["K"].astype(np.float32)
+            W2C = self.camera_dict[x]["W2C"].astype(np.float32)
+            C2W = np.linalg.inv(self.camera_dict[x]["W2C"]).astype(np.float32)
+            self.intrinsics_RGB.append(torch.from_numpy(K))
+            self.pose_RGB.append(torch.from_numpy(C2W))
+            self.world_mats_RGB_np.append(W2C)
+        self.RGB_images = torch.from_numpy(self.RGB_np.astype(np.float32)).cpu()  # [n_RGB, H, W, 3]
+        self.RGB_masks = torch.from_numpy(self.masks_RGB_np.astype(np.float32)).cpu()  # [n_images, H, W, 3]
+
+        self.intrinsics_RGB = torch.stack(self.intrinsics_RGB).to(self.device)  # [n_RGB, 4, 4]
+        self.intrinsics_RGB_inv = torch.inverse(self.intrinsics_RGB)  # [n_RGB, 4, 4]
+        self.pose_RGB = torch.stack(self.pose_RGB).to(self.device)  # [n_RGB, 4, 4]
+        self.focal = self.intrinsics_RGB[0][0, 0]
+        self.H, self.W = self.RGB_images.shape[1], self.RGB_images.shape[2]
+        self.image_pixels = self.H * self.W
+
+        object_bbox_min = np.array([-1.01, -1.01, -1.01, 1.0])
+        object_bbox_max = np.array([1.01, 1.01, 1.01, 1.0])
+        # Object scale mat: region of interest to **extract mesh**
+        object_scale_mat = np.eye(4).astype(np.float32)
+        object_bbox_min = np.linalg.inv(self.scale_mats_np[0]) @ object_scale_mat @ object_bbox_min[:, None]
+        object_bbox_max = np.linalg.inv(self.scale_mats_np[0]) @ object_scale_mat @ object_bbox_max[:, None]
+        self.object_bbox_min = object_bbox_min[:3, 0]
+        self.object_bbox_max = object_bbox_max[:3, 0]
+        print("Load data: End")
+
+    def transform_pose(self, W2C, translate, scale):
+        return transform_pose(W2C, translate, scale)
+
+    def load_IRON_dict(self, filename='cam_dict_norm.json'):
+        camera_dict = json.load(open(os.path.join(self.data_dir, filename)))
+        for x in list(camera_dict.keys()):
+            x = x[:-4] + ".png"
+            camera_dict[x]["K"] = np.array(camera_dict[x]["K"]).reshape((4, 4))
+            camera_dict[x]["W2C"] = np.array(camera_dict[x]["W2C"]).reshape((4, 4))
+        return camera_dict
+
+    def load_TCNN_dict(self, filename='transforms.json'):
+        camera_dict_raw = json.load(open(os.path.join(self.data_dir, filename)))
+        fx = camera_dict_raw['fl_x']
+        fy = camera_dict_raw['fl_y']
+        cx = camera_dict_raw['cx']
+        cy = camera_dict_raw['cy']
+        K = np.array([[fx, 0, cx, 0], [0, fy, cx, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+        camera_dict = {}
+        for frame in camera_dict_raw['frames']:
+            file_path = frame['file_path']
+            x = os.path.basename(file_path)
+            transform_matrix = frame['transform_matrix']
+            C2W = transform_matrix
+            camera_dict[x]['K'] = K
+            camera_dict[x]['C2W'] = C2W
+        return camera_dict
+
+    def gen_rays_at_nir(self, img_idx, resolution_level=1):
+        l = resolution_level
+        tx = torch.linspace(0, self.W - 1, self.W // l)
+        ty = torch.linspace(0, self.H - 1, self.H // l)
+        pixels_x, pixels_y = torch.meshgrid(tx, ty)
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
+        p = torch.matmul(self.intrinsics_NIR_inv[img_idx, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+        rays_v = torch.matmul(self.pose_NIR[img_idx, None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
+        rays_o = self.pose_NIR[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
+        return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
+
+    def gen_rays_at_rgb(self, img_idx, resolution_level=1):
+        l = resolution_level
+        tx = torch.linspace(0, self.W - 1, self.W // l)
+        ty = torch.linspace(0, self.H - 1, self.H // l)
+        pixels_x, pixels_y = torch.meshgrid(tx, ty)
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
+        p = torch.matmul(self.intrinsics_RGB_inv[img_idx, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+        rays_v = torch.matmul(self.pose_RGB[img_idx, None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
+        rays_o = self.pose_RGB[img_idx, None, None, :3, 3].expand(rays_v.shape)  # W, H, 3
+        return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
+
+    def gen_rays_at(self, img_idx, resolution_level=1):
+        """
+        Generate rays at world space from one camera.
+        """
+        return self.gen_rays_at_rgb(img_idx, resolution_level=resolution_level)
+        # if data_type == 'rgb' and self.enable_RGB:
+        #     return self.gen_rays_at_rgb(img_idx, resolution_level=resolution_level)
+        # elif data_type == 'nir' and self.enable_NIR:
+        #     return self.gen_rays_at_nir(img_idx, resolution_level=resolution_level)
+        # else:
+        #     return None
+
+    def gen_random_rays_at_RGB(self, img_idx, batch_size):
+        """
+            Generate random rays at world space from one camera for RGB dataset
+        """
+        pixels_x = torch.randint(low=0, high=self.W, size=[batch_size])
+        pixels_y = torch.randint(low=0, high=self.H, size=[batch_size])
+        color = self.RGB_images[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        mask = self.RGB_masks[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1).float()  # batch_size, 3
+        p = torch.matmul(self.intrinsics_RGB_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # batch_size, 3
+        rays_v = torch.matmul(self.pose_RGB[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
+        # rays_v = rays_v * -1
+        rays_o = self.pose_RGB[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
+        return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()  # batch_size, 10
+
+    # def gen_random_rays_at_NIR(self, img_idx, batch_size):
+    #     """
+    #         Generate random rays at world space from one camera for NIR dataset
+    #     """
+    #     pixels_x = torch.randint(low=0, high=self.W, size=[batch_size])
+    #     pixels_y = torch.randint(low=0, high=self.H, size=[batch_size])
+    #     color = self.NIR_images[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+    #     mask = self.NIR_masks[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+    #     p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1).float()  # batch_size, 3
+    #     p = torch.matmul(self.intrinsics_NIR_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
+    #     rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # batch_size, 3
+    #     rays_v = torch.matmul(self.pose_NIR[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
+    #     # rays_v = rays_v * -1
+    #     rays_o = self.pose_NIR[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
+    #     return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()  # batch_size, 10
+
+    def gen_random_rays_at(self, img_idx, batch_size):
+        """
+        Generate random rays at world space from one camera.
+        """
+        # pixels_x = torch.randint(low=0, high=self.W, size=[batch_size])
+        # pixels_y = torch.randint(low=0, high=self.H, size=[batch_size])
+        # color = self.images[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        # mask = self.masks[img_idx][(pixels_y, pixels_x)]  # batch_size, 3
+        # p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1).float()  # batch_size, 3
+        # p = torch.matmul(self.intrinsics_all_inv[img_idx, None, :3, :3], p[:, :, None]).squeeze()  # batch_size, 3
+        # rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # batch_size, 3
+        # rays_v = torch.matmul(self.pose_all[img_idx, None, :3, :3], rays_v[:, :, None]).squeeze()  # batch_size, 3
+        # # rays_v = rays_v * -1
+        # rays_o = self.pose_all[img_idx, None, :3, 3].expand(rays_v.shape)  # batch_size, 3
+        # return torch.cat([rays_o.cpu(), rays_v.cpu(), color, mask[:, :1]], dim=-1).cuda()  # batch_size, 10
+        return self.gen_random_rays_at_RGB(img_idx=img_idx, batch_size=batch_size)
+        # if data_type == 'rgb':
+        #     return self.gen_random_rays_at_RGB(img_idx=img_idx, batch_size=batch_size)
+        # elif data_type == 'nir':
+        #     return self.gen_random_rays_at_NIR(img_idx=img_idx, batch_size=batch_size)
+        # else:
+        #     return None
+
+    def gen_rays_between(self, idx_0, idx_1, ratio, resolution_level=1):
+        """
+        Interpolate pose between two cameras.
+        """
+        intrinsics_all_inv = self.intrinsics_RGB_inv
+        pose_all = self.pose_RGB
+        # if data_type == 'rgb':
+        #     intrinsics_all_inv = self.intrinsics_RGB_inv
+        #     pose_all = self.pose_RGB
+        # elif data_type == 'nir':
+        #     intrinsics_all_inv = self.intrinsics_NIR_inv
+        #     pose_all = self.pose_NIR
+        # else:
+        #     pass
+        l = resolution_level
+        tx = torch.linspace(0, self.W - 1, self.W // l)
+        ty = torch.linspace(0, self.H - 1, self.H // l)
+        pixels_x, pixels_y = torch.meshgrid(tx, ty)
+        p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1)  # W, H, 3
+        p = torch.matmul(intrinsics_all_inv[0, None, None, :3, :3], p[:, :, :, None]).squeeze()  # W, H, 3
+        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # W, H, 3
+        trans = pose_all[idx_0, :3, 3] * (1.0 - ratio) + pose_all[idx_1, :3, 3] * ratio
+        pose_0 = pose_all[idx_0].detach().cpu().numpy()
+        pose_1 = pose_all[idx_1].detach().cpu().numpy()
+        pose_0 = np.linalg.inv(pose_0)
+        pose_1 = np.linalg.inv(pose_1)
+        rot_0 = pose_0[:3, :3]
+        rot_1 = pose_1[:3, :3]
+        rots = Rot.from_matrix(np.stack([rot_0, rot_1]))
+        key_times = [0, 1]
+        slerp = Slerp(key_times, rots)
+        rot = slerp(ratio)
+        pose = np.diag([1.0, 1.0, 1.0, 1.0])
+        pose = pose.astype(np.float32)
+        pose[:3, :3] = rot.as_matrix()
+        pose[:3, 3] = ((1.0 - ratio) * pose_0 + ratio * pose_1)[:3, 3]
+        pose = np.linalg.inv(pose)
+        rot = torch.from_numpy(pose[:3, :3]).cuda()
+        trans = torch.from_numpy(pose[:3, 3]).cuda()
+        rays_v = torch.matmul(rot[None, None, :3, :3], rays_v[:, :, :, None]).squeeze()  # W, H, 3
+        rays_o = trans[None, None, :3].expand(rays_v.shape)  # W, H, 3
+        return rays_o.transpose(0, 1), rays_v.transpose(0, 1)
+
+    def near_far_from_sphere(self, rays_o, rays_d, scale=1.0):
+        a = torch.sum(rays_d ** 2, dim=-1, keepdim=True)
+        b = 2.0 * torch.sum(rays_o * rays_d, dim=-1, keepdim=True)
+        mid = 0.5 * (-b) / a
+        halfdist = 1.0 / (scale + 0.0001)
+        near = mid - 1.0 * halfdist
+        far = mid + 1.0 * halfdist
+        return near, far
+
+    def image_at(self, idx, resolution_level):
+        if self.RGB_list[idx].endswith(".exr"):
+            img = np.clip(self.exr_reader(self.RGB_list[idx]) * 256, 0, 255)
+        if self.RGB_list[idx].endswith(".png"):
+            img = self.image_reader(self.RGB_list[idx])
+        if self.RGB_list[idx].endswith(".jpg"):
+            img = self.image_reader(self.RGB_list[idx])
+        return (cv2.resize(img, (self.W // resolution_level, self.H // resolution_level))).clip(0, 255).astype(np.uint8)
+
+
+
 ###### load dataset
 def to8b(x):
     return np.clip(x * 255.0, 0.0, 255.0).astype(np.uint8)

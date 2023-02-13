@@ -12,35 +12,36 @@ from shutil import copyfile
 from icecream import ic
 from tqdm import tqdm
 from pyhocon import ConfigFactory
-from models.dataset import Dataset, DatasetNIRRGB
+from models.dataset import Dataset, DatasetNIRRGB, DatasetGeneral
 from models.fields import RenderingNetwork, SDFNetwork, SingleVarianceNetwork, NeRF, NeRFdual
 from models.renderer import NeuSRenderer
 
 
 class Runner:
     def __init__(self, conf_path, mode="train",
-                 case="CASE_NAME",
-                 nir_case="NIR_NAME",
-                 rgb_case="RGB_NAME", is_continue=False):
+                 case="CASE_NAME", is_continue=False):
         self.device = torch.device("cuda")
 
         # Configuration
         self.conf_path = conf_path
-        conf_text = None
-        with open(self.conf_path) as f:
-            conf_text = f.read()
-            conf_text = conf_text.replace("CASE_NAME", case)
-        print(conf_text)
+        conf_text = self.load_conf(case=case)
+        # with open(self.conf_path) as f:
+        #     conf_text = f.read()
+        #     conf_text = conf_text.replace("CASE_NAME", case)
+        # print(conf_text)
         self.conf = ConfigFactory.parse_string(conf_text)
         self.conf["dataset.data_dir"] = self.conf["dataset.data_dir"].replace("CASE_NAME", case)
-        self.conf['dataset']['rgb_dir'] = self.conf['dataset']['rgb_dir'].replace("CASE_NAME", rgb_case)
-        self.conf['dataset']['nir_dir'] = self.conf['dataset']['nir_dir'].replace("CASE_NAME", nir_case)
+        self.conf['dataset']['rgb_dir'] = self.conf['dataset']['rgb_dir'].replace("CASE_NAME", case)
+        self.conf['dataset']['nir_dir'] = self.conf['dataset']['nir_dir'].replace("CASE_NAME", case)
+        self.conf['dataset']['flash_dir'] = self.conf['dataset']['flash_dir'].replace("CASE_NAME", case)
+        self.conf['dataset']['env_dir'] = self.conf['dataset']['env_dir'].replace("CASE_NAME", case)
         self.base_exp_dir = self.conf["general.base_exp_dir"]
         self.rgb_exp_dir = self.conf["general.rgb_exp_dir"]
         os.makedirs(self.rgb_exp_dir, exist_ok=True)
         os.makedirs(self.base_exp_dir, exist_ok=True)
 
-        self.dataset = DatasetNIRRGB(self.conf["dataset"])
+        #self.dataset = DatasetNIRRGB(self.conf["dataset"])
+        self.dataset = DatasetGeneral(self.conf["dataset"])
         self.iter_step = 0
 
         # Training parameters
@@ -72,41 +73,51 @@ class Runner:
         # Networks
         params_to_train = []
         self.nerf_outside = NeRF(**self.conf["model.nerf"]).to(self.device)
-        self.nir_nerf_outside = NeRF(**self.conf["model.nerf"]).to(self.device)
+        #self.nir_nerf_outside = NeRF(**self.conf["model.nerf"]).to(self.device)
         self.sdf_network = SDFNetwork(**self.conf["model.sdf_network"]).to(self.device)
         self.deviation_network = SingleVarianceNetwork(**self.conf["model.variance_network"]).to(self.device)
-        if self.dataset.enable_RGB:
-            self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
-        if self.dataset.enable_NIR:
-            self.nir_network = RenderingNetwork(**self.conf["model.nir_network"]).to(self.device)
+        # if self.dataset.enable_RGB:
+        #     self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
+        # if self.dataset.enable_NIR:
+        #     self.nir_network = RenderingNetwork(**self.conf["model.nir_network"]).to(self.device)
+        self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
         params_to_train += list(self.nerf_outside.parameters())
         params_to_train += list(self.sdf_network.parameters())
         params_to_train += list(self.deviation_network.parameters())
-        if self.dataset.enable_RGB:
-            params_to_train += list(self.color_network.parameters())
-        if self.dataset.enable_NIR:
-            params_to_train += list(self.nir_nerf_outside.parameters())
-            params_to_train += list(self.nir_network.parameters())
+        params_to_train += list(self.color_network.parameters())
+        # if self.dataset.enable_RGB:
+        #     params_to_train += list(self.color_network.parameters())
+        # if self.dataset.enable_NIR:
+        #     params_to_train += list(self.nir_nerf_outside.parameters())
+        #     params_to_train += list(self.nir_network.parameters())
 
         self.optimizer = torch.optim.Adam(params_to_train, lr=self.learning_rate)
 
-        if self.dataset.enable_RGB:
-            self.renderer = NeuSRenderer(
-                self.nerf_outside,
-                self.sdf_network,
-                self.deviation_network,
-                self.color_network,
-                **self.conf["model.neus_renderer"]
-            )
+        self.renderer = NeuSRenderer(
+            self.nerf_outside,
+            self.sdf_network,
+            self.deviation_network,
+            self.color_network,
+            **self.conf["model.neus_renderer"]
+        )
 
-        if self.dataset.enable_NIR:
-            self.renderer_nir = NeuSRenderer(
-                self.nir_nerf_outside,
-                self.sdf_network,
-                self.deviation_network,
-                self.nir_network,
-                **self.conf["model.neus_renderer"]
-            )
+        # if self.dataset.enable_RGB:
+        #     self.renderer = NeuSRenderer(
+        #         self.nerf_outside,
+        #         self.sdf_network,
+        #         self.deviation_network,
+        #         self.color_network,
+        #         **self.conf["model.neus_renderer"]
+        #     )
+        #
+        # if self.dataset.enable_NIR:
+        #     self.renderer_nir = NeuSRenderer(
+        #         self.nir_nerf_outside,
+        #         self.sdf_network,
+        #         self.deviation_network,
+        #         self.nir_network,
+        #         **self.conf["model.neus_renderer"]
+        #     )
 
         # Load checkpoint
         latest_model_name = None
@@ -133,6 +144,12 @@ class Runner:
 
         if self.mode[:5] == "train":
             self.file_backup()
+
+    def load_conf(self, case):
+        with open(self.conf_path) as f:
+            conf_text = f.read()
+            conf_text = conf_text.replace("CASE_NAME", case)
+        return conf_text
 
     def train_NIR(self):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
@@ -223,6 +240,119 @@ class Runner:
 
             if self.iter_step % len(image_perm) == 0:
                 image_perm = torch.randperm(self.dataset.n_NIR)
+
+    def train_general(self):
+        self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
+        self.update_learning_rate()
+        self.validate_image(idx=10, resolution_level=4)
+        res_step = self.end_iter - self.iter_step
+        res_step = 0
+        res_step = self.RGB_end_iter - self.iter_step
+        image_perm = torch.randperm(self.dataset.n_RGB)
+
+        for iter_i in tqdm(range(res_step)):
+            data = self.dataset.gen_random_rays_at(image_perm[self.iter_step % len(image_perm)], self.batch_size)
+
+            rays_o, rays_d, true_rgb, mask = (data[:, :3], data[:, 3:6], data[:, 6:9], data[:, 9:10])
+            near, far = self.dataset.near_far_from_sphere(rays_o, rays_d)
+
+            background_rgb = None
+            if self.use_white_bkgd:
+                background_rgb = torch.ones([1, 3])
+
+            if self.mask_weight > 0.0:
+                mask = (mask > 0.5).float()
+            else:
+                mask = torch.ones_like(mask)
+
+            mask_sum = mask.sum() + 1e-5
+            render_out = self.renderer.render(
+                rays_o,
+                rays_d,
+                near,
+                far,
+                background_rgb=background_rgb,
+                cos_anneal_ratio=self.get_cos_anneal_ratio(),
+            )
+            # elif data_type == 'nir':
+            #     render_out = self.renderer_nir.render(
+            #         rays_o,
+            #         rays_d,
+            #         near,
+            #         far,
+            #         background_rgb=background_rgb,
+            #         cos_anneal_ratio=self.get_cos_anneal_ratio(),
+            #     )
+
+            color_fine = render_out["color_fine"]
+            s_val = render_out["s_val"]
+            cdf_fine = render_out["cdf_fine"]
+            gradient_error = render_out["gradient_error"]
+            weight_max = render_out["weight_max"]
+            weight_sum = render_out["weight_sum"]
+            pred_rgb = color_fine[..., :3]
+            # Loss
+            color_error = (pred_rgb - true_rgb) * mask
+
+            # previous
+            color_fine_loss = F.l1_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
+
+            # Arthur
+            # color_fine_loss = F.l2_loss(color_error, torch.zeros_like(color_error), reduction="sum") / mask_sum
+            # color_fine_loss = F.mse_loss(color_fine * mask, true_rgb * mask, reduction='sum') / mask_sum
+            psnr = 20.0 * torch.log10(1.0 / (((pred_rgb - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+            # if data_type == 'rgb':
+            #     psnr = 20.0 * torch.log10(1.0 / (((pred_rgb - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+            # elif data_type == 'nir':
+            #     psnr = 20.0 * torch.log10(1.0 / (((pred_nir - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+            # else:
+            #     pass
+            # psnr = 20.0 * torch.log10(1.0 / (((color_fine - true_rgb) ** 2 * mask).sum() / (mask_sum * 3.0)).sqrt())
+
+            eikonal_loss = gradient_error
+
+            mask_loss = F.binary_cross_entropy(weight_sum.clip(1e-3, 1.0 - 1e-3), mask)
+
+            loss = color_fine_loss + eikonal_loss * self.igr_weight + mask_loss * self.mask_weight
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            self.iter_step += 1
+
+            self.writer.add_scalar("Loss/loss", loss, self.iter_step)
+            self.writer.add_scalar("Loss/color_loss", color_fine_loss, self.iter_step)
+            self.writer.add_scalar("Loss/eikonal_loss", eikonal_loss, self.iter_step)
+            self.writer.add_scalar("Statistics/s_val", s_val.mean(), self.iter_step)
+            self.writer.add_scalar("Statistics/cdf", (cdf_fine[:, :1] * mask).sum() / mask_sum, self.iter_step)
+            self.writer.add_scalar("Statistics/weight_max", (weight_max * mask).sum() / mask_sum, self.iter_step)
+            self.writer.add_scalar("Statistics/psnr", psnr, self.iter_step)
+
+            if self.iter_step % self.report_freq == 0:
+                print(self.base_exp_dir)
+                print("iter:{:8>d} loss = {} lr={}".format(self.iter_step, loss, self.optimizer.param_groups[0]["lr"]))
+
+            if self.iter_step % self.save_freq == 0:
+                self.save_checkpoint()
+
+            if self.iter_step % self.val_freq == 0:
+                # self.validate_image(data_type=data_type)
+                self.validate_image()
+
+            if self.iter_step % self.val_mesh_freq == 0:
+                self.validate_mesh()
+
+            self.update_learning_rate()
+
+            if self.iter_step % len(image_perm) == 0:
+                image_perm = torch.randperm(self.dataset.n_RGB)
+                # if data_type == 'rgb':
+                #     image_perm = torch.randperm(self.dataset.n_RGB)
+                # elif data_type == 'nir':
+                #     image_perm = torch.randperm(self.dataset.n_NIR)
+                # else:
+                #     image_perm = torch.randperm(self.dataset.n_RGB)
 
     def train_RGB(self):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
@@ -600,37 +730,24 @@ class Runner:
             checkpoint = torch.load(os.path.join(self.base_exp_dir, "checkpoints", nir_checkpoint_name),
                                     map_location=self.device)
             print('loading other network from NIR models')
-            self.nir_nerf_outside.load_state_dict(checkpoint["nerf"])
+            self.nerf_outside.load_state_dict(checkpoint["nerf"])
             #self.nir_nerf_outside.load_state_dict
 
             self.deviation_network.load_state_dict(checkpoint["variance_network_fine"])
-            self.nir_network.load_state_dict(checkpoint["color_network_fine"])
+            self.color_network.load_state_dict(checkpoint["color_network_fine"])
             self.optimizer.load_state_dict(checkpoint["optimizer"])
             self.iter_step = checkpoint["iter_step"]
 
             logging.info("End")
 
-    def save_checkpoint(self, data_type='rgb'):
-        if data_type == 'nir':
-            checkpoint = {
-                "nerf": self.nir_nerf_outside.state_dict(),
-                "sdf_network_fine": self.sdf_network.state_dict(),
-                "variance_network_fine": self.deviation_network.state_dict(),
-                "color_network_fine": self.nir_network.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-                "iter_step": self.iter_step,
-            }
-        elif data_type == 'rgb':
-            checkpoint = {
-                "nerf": self.nerf_outside.state_dict(),
-                "sdf_network_fine": self.sdf_network.state_dict(),
-                "variance_network_fine": self.deviation_network.state_dict(),
-                "color_network_fine": self.color_network.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-                "iter_step": self.iter_step,
-            }
-        else:
-            print('data_type:', data_type)
+    def save_checkpoint(self):
+        checkpoint = {
+            "nerf": self.nir_nerf_outside.state_dict(),
+            "sdf_network_fine": self.sdf_network.state_dict(),
+            "variance_network_fine": self.deviation_network.state_dict(),
+            "color_network_fine": self.nir_network.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "iter_step": self.iter_step}
 
         os.makedirs(os.path.join(self.base_exp_dir, "checkpoints"), exist_ok=True)
         torch.save(
@@ -642,20 +759,21 @@ class Runner:
             ),
         )
 
-    def validate_image(self, idx=-1, resolution_level=-1, data_type='rgb'):
+    def validate_image(self, idx=-1, resolution_level=-1):
         if idx < 0:
-            if data_type == 'rgb':
-                idx = np.random.randint(self.dataset.n_RGB)
-            elif data_type == 'nir':
-                idx = np.random.randint(self.dataset.n_NIR)
-            else:
-                pass
+            idx = np.random.randint(self.dataset.n_RGB)
+            # if data_type == 'rgb':
+            #     idx = np.random.randint(self.dataset.n_RGB)
+            # elif data_type == 'nir':
+            #     idx = np.random.randint(self.dataset.n_NIR)
+            # else:
+            #     pass
 
         print("Validate: iter: {}, camera: {}".format(self.iter_step, idx))
 
         if resolution_level < 0:
             resolution_level = self.validate_resolution_level
-        rays_o, rays_d = self.dataset.gen_rays_at(idx, resolution_level=resolution_level, data_type=data_type)
+        rays_o, rays_d = self.dataset.gen_rays_at(idx, resolution_level=resolution_level)
         H, W, _ = rays_o.shape
         rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
         rays_d = rays_d.reshape(-1, 3).split(self.batch_size)
@@ -665,30 +783,16 @@ class Runner:
 
         for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
             near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch, self.dataset.scale)
-            #background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
-
-            if data_type == 'nir':
-                background_rgb = torch.zeros([1, 3]) if self.use_white_bkgd else None
-                render_out = self.renderer_nir.render(
-                    rays_o_batch,
-                    rays_d_batch,
-                    near,
-                    far,
-                    cos_anneal_ratio=self.get_cos_anneal_ratio(),
-                    background_rgb=background_rgb,
-                )
-                n_samples = self.renderer_nir.n_samples + self.renderer_nir.n_importance
-            elif data_type == 'rgb':
-                background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
-                render_out = self.renderer.render(
-                    rays_o_batch,
-                    rays_d_batch,
-                    near,
-                    far,
-                    cos_anneal_ratio=self.get_cos_anneal_ratio(),
-                    background_rgb=background_rgb,
-                )
-                n_samples = self.renderer.n_samples + self.renderer.n_importance
+            background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
+            render_out = self.renderer.render(
+                rays_o_batch,
+                rays_d_batch,
+                near,
+                far,
+                cos_anneal_ratio=self.get_cos_anneal_ratio(),
+                background_rgb=background_rgb,
+            )
+            n_samples = self.renderer.n_samples + self.renderer.n_importance
 
             def feasible(key):
                 return (key in render_out) and (render_out[key] is not None)
@@ -708,22 +812,24 @@ class Runner:
         RGB_fine = None
         NIR_fine = None
         if len(out_rgb_fine) > 0:
-            if data_type == 'rgb':
-                img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
-            if data_type == 'nir':
-                NIR_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
-                #img_fine = np.concatenate([NIR_fine, NIR_fine, NIR_fine], axis=2)
-                img_fine = NIR_fine
+            img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
+            # if data_type == 'rgb':
+            #     img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
+            # if data_type == 'nir':
+            #     NIR_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
+            #     #img_fine = np.concatenate([NIR_fine, NIR_fine, NIR_fine], axis=2)
+            #     img_fine = NIR_fine
 
         normal_img = None
         if len(out_normal_fine) > 0:
             normal_img = np.concatenate(out_normal_fine, axis=0)
-            if data_type == 'rgb':
-                rot = np.linalg.inv(self.dataset.pose_RGB[idx, :3, :3].detach().cpu().numpy())
-            elif data_type == 'nir':
-                rot = np.linalg.inv(self.dataset.pose_NIR[idx, :3, :3].detach().cpu().numpy())
-            else:
-                pass
+            rot = np.linalg.inv(self.dataset.pose_RGB[idx, :3, :3].detach().cpu().numpy())
+            # if data_type == 'rgb':
+            #     rot = np.linalg.inv(self.dataset.pose_RGB[idx, :3, :3].detach().cpu().numpy())
+            # elif data_type == 'nir':
+            #     rot = np.linalg.inv(self.dataset.pose_NIR[idx, :3, :3].detach().cpu().numpy())
+            # else:
+            #     pass
             normal_img = (np.matmul(rot[None, :, :], normal_img[:, :, None]).reshape([H, W, 3, -1]) * 128 + 128).clip(
                 0, 255
             )
@@ -741,7 +847,7 @@ class Runner:
                     self.base_exp_dir,
                     "validations_fine",
                     "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
-                imggt = self.dataset.image_at(idx, resolution_level=resolution_level, data_type=data_type)
+                imggt = self.dataset.image_at(idx, resolution_level=resolution_level)
                 if len(imggt.shape) == 2:
                     imggt = np.stack([imggt, imggt, imggt], axis=-1)
                 elif imggt.shape[-1] == 1:
@@ -870,25 +976,26 @@ if __name__ == "__main__":
     print(args)
 
     torch.cuda.set_device(args.gpu)
-    runner = Runner(args.conf, args.mode, args.case, args.nir_case, args.rgb_case, args.is_continue)
+    runner = Runner(args.conf, args.mode, args.case, args.is_continue)
 
     if args.mode == "train":
         #runner.train()
         conf_filename = os.path.basename(args.conf)
-        if conf_filename == 'nirrgb.conf':
-            #runner.train_RGB()
-            runner.train_NIR()
-        elif os.path.basename(args.conf) == 'rgb.conf' or os.path.basename(args.conf) == 'rgb_mask.conf':
-            runner.train_NIRRGB(data_type='rgb')
-            #runner.validate_image(idx=10, resolution_level=1)
-        elif os.path.basename(args.conf) == 'nir.conf' or os.path.basename(args.conf) == 'nir_mask.conf':
-            runner.train_NIRRGB(data_type='nir')
-        elif os.path.basename(args.conf) == 'flash_rgb_real.conf':
-            runner.train_NIRRGB(data_type='rgb')
-        elif os.path.basename(args.conf) == 'nirrgb_mask.conf':
-            runner.train_NIRRGB(data_type='rgb')
-        else:
-            runner.train_NIRRGB(data_type='rgb')
+        runner.train_general()
+        # if conf_filename == 'nirrgb.conf':
+        #     #runner.train_RGB()
+        #     runner.train_NIR()
+        # elif os.path.basename(args.conf) == 'rgb.conf' or os.path.basename(args.conf) == 'rgb_mask.conf':
+        #     runner.train_NIRRGB(data_type='rgb')
+        #     #runner.validate_image(idx=10, resolution_level=1)
+        # elif os.path.basename(args.conf) == 'nir.conf' or os.path.basename(args.conf) == 'nir_mask.conf':
+        #     runner.train_NIRRGB(data_type='nir')
+        # elif os.path.basename(args.conf) == 'flash_rgb_real.conf':
+        #     runner.train_NIRRGB(data_type='rgb')
+        # elif os.path.basename(args.conf) == 'nirrgb_mask.conf':
+        #     runner.train_NIRRGB(data_type='rgb')
+        # else:
+        #     runner.train_NIRRGB(data_type='rgb')
     elif args.mode == "validata_image":
         #runner.train_NIRRGB(data_type='rgb')
         runner.validate_image(idx=10, resolution_level=1)
