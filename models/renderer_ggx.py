@@ -520,15 +520,12 @@ class RoughPlasticCoLocRenderer(nn.Module):
 class CompositeRenderer(nn.Module):
     def __init__(self, use_cuda=False):
         super().__init__()
-
-        self.MTS_TRANS = torch.from_numpy(
-            np.loadtxt(os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/ext_mts_rtrans_data.txt")).astype(np.float32)
-        )  # 5000 entries, external IOR
-        self.MTS_DIFF_TRANS = torch.from_numpy(
-            np.loadtxt(
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/int_mts_diff_rtrans_data.txt")
-            ).astype(np.float32)
-        )  # 50 entries, internal IOR
+        mts_trans_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/ext_mts_rtrans_data.txt")
+        self.MTS_TRANS = torch.from_numpy(np.loadtxt(mts_trans_path).astype(np.float32))
+        # 5000 entries, external IOR
+        mts_diff_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ggx/int_mts_diff_rtrans_data.txt")
+        self.MTS_DIFF_TRANS = torch.from_numpy(np.loadtxt(mts_diff_path).astype(np.float32))
+        # 50 entries, internal IOR
         self.num_theta_samples = 100
         self.num_alpha_samples = 50
 
@@ -621,7 +618,8 @@ class CompositeRenderer(nn.Module):
         return specular_albedo * F
 
     def main_dielectric_reflection(self, D, G, cos_theta, eta, specular_albedo=1.0):
-        F = self.dielectric_reflection(cos_theta, eta)
+        #F = self.dielectric_reflection(cos_theta, eta)
+        F = 0.04
         return specular_albedo * F * D * G / (4.0 * torch.abs(cos_theta))
 
     def main_specular_reflection(self, D, G, F_dielectric, metallic, spec_tint, cos_theta, color, intensity, eta):
@@ -851,11 +849,14 @@ class CompositeRenderer(nn.Module):
             k_cu = 5.4856
             eta = 1.5
             main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, metallic_eta, metallic_k, specular_albedo)
+            #main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, eta_cu, k_cu, specular_albedo)
             main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, dielectric_eta, specular_albedo)
             main_metallic_rgb *= light_intensity
             main_dielectric_rgb *= light_intensity
             #main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
-            main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
+            #main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
+            #main_specular_rgb = main_dielectric_rgb
+            main_specular_rgb = main_metallic_rgb
         else:
             main_specular_rgb = torch.zeros_like(specular_albedo)
 
@@ -874,14 +875,13 @@ class CompositeRenderer(nn.Module):
         #rgb += specular_rgb
         #main_metallic_rgb = light_intensity * main_metallic_rgb
         #main_dielectric_rgb = light_intensity * main_dielectric_rgb
-        rgb += main_metallic_rgb
-        rgb += main_dielectric_rgb
+        #rgb += main_metallic_rgb
+        rgb += main_specular_rgb
 
         ret = {"diffuse_rgb": diffuse_rgb,
                "specular_rgb": main_specular_rgb,
                "metallic_rgb": main_metallic_rgb,
                "dielectric_rgb": main_dielectric_rgb,
-               #"clearcoat_specular": clearcoat_specular_rgb,
                "rgb": rgb}
         return ret
 

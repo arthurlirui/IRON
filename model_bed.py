@@ -17,6 +17,7 @@ from utils.process_routine import render_all
 import tqdm
 import configargparse
 from models.network_conf import choose_optmizer, choose_renderer, choose_renderer_func
+import kornia
 
 
 class ModelBed:
@@ -103,8 +104,17 @@ class ModelBed:
 
     def get_material_comp(self, points, normals, features):
         res = {}
+        # configure (1)
+        #diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
+        #specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
+        # configure (2)
+        #diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, None, features).abs()
+        #specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, -normals, features).abs()
+        #specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
+
         diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
-        specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
+        specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, -normals, features).abs()
+
         metallic = self.color_network_dict["metallic_network"](points, normals, None, features).abs()
         specular_roughness = self.color_network_dict["specular_roughness_network"](points, normals, None, features).abs()
         dielectric = self.color_network_dict["dielectric_network"](points, normals, None, features).abs()
@@ -141,9 +151,12 @@ class ModelBed:
         metallic = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
         dielectric = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
         normals_pad = rgb.clone()
+        costheta = rgb[..., 0:1].clone()
 
         if interior_mask.any():
             normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
+            ray_d_norm = ray_d / (ray_d.norm(dim=-1, keepdim=True) + 1e-10)
+            costheta_t = torch.sum(-1*ray_d_norm*normals, dim=-1, keepdim=True)
             params = self.get_material_comp(points=points, normals=normals, features=features)
             results = self.renderer(
                 color_network_dict["point_light_network"](),
@@ -166,6 +179,7 @@ class ModelBed:
             metallic_k[interior_mask] = params['metallic_k']
             dielectric_eta[interior_mask] = params['dielectric_eta']
 
+            costheta[interior_mask] = costheta_t
             normals_pad[interior_mask] = normals
             metallic[interior_mask] = params['metallic']
             dielectric[interior_mask] = params['dielectric']
@@ -183,7 +197,8 @@ class ModelBed:
             "metallic_rgb": metallic_rgb,
             "metallic": metallic,
             "dielectric_rgb": dielectric_rgb,
-            "dielectric": dielectric
+            "dielectric": dielectric,
+            "costheta": costheta,
         }
 
     def set_raytracer(self, raytracer=None):
@@ -311,7 +326,9 @@ class ModelBed:
         diffuse_albedo_im = results["diffuse_albedo"]
         specular_albedo_im = results["specular_albedo"]
         specular_roughness_im = np.tile(results["specular_roughness"][:, :, np.newaxis], (1, 1, 3))
-        depth = np.tile(results["depth"][:, :, np.newaxis], (1, 1, 3))
+        depth = np.log(np.tile(results["depth"][:, :, np.newaxis] + 1e-6, (1, 1, 3)))
+        costheta = np.tile(results["costheta"][:, :, np.newaxis], (1, 1, 3))
+        costheta_mask = costheta > 0.9
 
         metallic_rgb = results['metallic_rgb']
         dielectric_rgb = results['dielectric_rgb']
@@ -320,20 +337,22 @@ class ModelBed:
         dielectric_eta = results['dielectric_eta']
 
         if self.args.gamma_pred:
-            gt_color_im = gamma_correction(gt_color_im, 2.2)
+            gt_color_im = gamma_correction(gt_color_im + 1e-6, 2.2)
             color_im = gamma_correction(color_im + 1e-6, 2.2)
             diffuse_color_im = gamma_correction(diffuse_color_im + 1e-6, 2.2)
             specular_color_im = gamma_correction(specular_color_im + 1e-6, 2.2)
             metallic_rgb = gamma_correction(metallic_rgb + 1e-6, 2.2)
-            maxv, minv = np.max(metallic_rgb[:]), np.min(metallic_rgb[:])
+            diffuse_albedo_im = gamma_correction(diffuse_albedo_im + 1e-6, 2.2)
+            specular_albedo_im = gamma_correction(specular_albedo_im + 1e-6, 2.2)
+            #maxv, minv = np.max(metallic_rgb[:]), np.min(metallic_rgb[:])
             dielectric_rgb = gamma_correction(dielectric_rgb + 1e-6, 2.2)
 
             #depth = gamma_correction(depth + 1e-6, 1.0 / 2.2)
-            depth = (depth - np.min(depth[:])) / (np.max(depth[:]) - np.min(depth[:]))
+            #depth = (depth - np.min(depth[:])) / (np.max(depth[:]) - np.min(depth[:]))
 
             metal_eta = gamma_correction(metal_eta + 1e-6, 2.2)
             metal_eta = (metal_eta - np.min(metal_eta[:])) / (np.max(metal_eta[:]) - np.min(metal_eta[:]))
-            metal_eta = metal_eta * 255
+            metal_eta = metal_eta
             metal_k = gamma_correction(metal_k + 1e-6, 2.2)
             metal_eta = (metal_eta - np.min(metal_eta[:])) / (np.max(metal_eta[:]) - np.min(metal_eta[:]))
             dielectric_eta = gamma_correction(dielectric_eta + 1e-6, 2.2)
@@ -341,12 +360,12 @@ class ModelBed:
         gt_color_im = gt_color_im[..., :3]
         normal_im = normal_im[..., :3]
 
-        img_list = [gt_color_im, normal_im, edge_mask_im,
-                    color_im, diffuse_color_im, specular_color_im,
-                    diffuse_albedo_im, specular_albedo_im, depth,
-                    metallic_rgb, dielectric_rgb, specular_roughness_im,
-                    metal_eta, metal_k, dielectric_eta]
-        im = concatenate_result(image_list=img_list, imarray_length=3)
+        img_list = [gt_color_im, color_im, normal_im, edge_mask_im,
+                    diffuse_color_im, specular_color_im, diffuse_albedo_im, specular_albedo_im,
+                    depth, metallic_rgb, dielectric_rgb, specular_roughness_im,
+                    costheta, costheta_mask]
+                    #metal_eta, dielectric_eta, costheta]
+        im = concatenate_result(image_list=img_list, imarray_length=4)
         file_name = f"logim_{global_step}_{os.path.basename(self.image_fpaths[idx])}"
         self.imwriter(os.path.join(self.args.out_dir, file_name), to8b(im))
 
@@ -488,10 +507,23 @@ class ModelBed:
                     del results[x]
                 self.validate_image(resize_ratio=0.25, global_step=global_step)
 
-    def train_comp(self, network_list=['diffuse_albedo_network'], num_iter=10000):
+    def component_switch(self, network_list=[]):
+        for nn in network_list:
+            if nn in self.color_network_dict:
+                self.color_network_dict[nn].requires_grad_(requires_grad=True)
+            else:
+                self.color_network_dict[nn].requires_grad_(requires_grad=False)
+
+    def train_comp(self, network_list=['diffuse_albedo_network'], opt_sdf=True, num_iter=10000):
         fill_holes = self.fill_holes
         handle_edges = not self.args.no_edgesample
         is_training = True
+        if opt_sdf:
+            self.sdf_network.requires_grad_(requires_grad=True)
+        else:
+            self.sdf_network.requires_grad_(requires_grad=False)
+        self.component_switch(network_list=network_list)
+
         if self.args.inv_gamma_gt:
             ic("linearizing ground-truth images using inverse gamma correction")
             self.gt_images = inv_gamma_correction(self.gt_images, gamma=2.2)
@@ -505,9 +537,9 @@ class ModelBed:
         num_gt_images = self.gt_images.shape[0]
 
         # change optimize components
-        self.color_optimizer_dict = choose_optmizer(renderer_name='comp',
-                                                    network_name_list=network_list,
-                                                    network_dict=self.color_network_dict)
+        #self.color_optimizer_dict = choose_optmizer(renderer_name='comp',
+        #                                            network_name_list=network_list,
+        #                                            network_dict=self.color_network_dict)
 
         for global_step in tqdm.tqdm(range(start_step, num_iter)):
             self.sdf_optimizer.zero_grad()
@@ -527,7 +559,7 @@ class ModelBed:
                                     fill_holes=self.fill_holes,
                                     handle_edges=self.handle_edges,
                                     is_training=is_training)
-            if False and self.args.gamma_pred:
+            if self.args.gamma_pred:
                 try:
                     results["color"] = gamma_correction(results["color"])
                     results["diffuse_color"] = gamma_correction(results["diffuse_color"])
@@ -538,10 +570,12 @@ class ModelBed:
             #results["color"] = results["diffuse_color"]
 
             mask = results["convergent_mask"]
+            costheta_mask = (results["costheta"]) > 0.9
             if handle_edges:
                 mask = mask | results["edge_mask"]
 
             img_loss = torch.Tensor([0.0]).cuda()
+            albedo_loss = torch.Tensor([0.0]).cuda()
             img_l2_loss = torch.Tensor([0.0]).cuda()
             img_ssim_loss = torch.Tensor([0.0]).cuda()
             roughrange_loss = torch.Tensor([0.0]).cuda()
@@ -556,14 +590,38 @@ class ModelBed:
             if mask.any():
                 pred_img = results["color"].permute(2, 0, 1).unsqueeze(0)
                 gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device, dtype=pred_img.dtype)
+                pred_diff_img = results["diffuse_color"].permute(2, 0, 1).unsqueeze(0)
+                pred_spec_img = results["specular_color"].permute(2, 0, 1).unsqueeze(0)
+                pred_diff_albedo = results["diffuse_albedo"].permute(2, 0, 1).unsqueeze(0)
+                pred_spec_albedo = results["specular_albedo"].permute(2, 0, 1).unsqueeze(0)
+
                 # print(pred_img.shape, gt_img.shape)
                 pred_img = pred_img[:, :3, :, :]
                 gt_img = gt_img[:, :3, :, :]
 
+                #pred_diff_img = pred_diff_img[:, :3, :, :]
+                #pred_spec_img = pred_spec_img[:, :3, :, :]
+                #gt_img = gt_img[:, :3, :, :]
+
                 # calculate image loss
+                #pred_diff_img[..., costheta_mask] = 0
+                #gt_diff_img = gt_img.clone()
+                #gt_diff_img[..., costheta_mask] = 0
+
+                #img_l2_loss = self.pyramidl2_loss_fn(pred_diff_img, gt_diff_img)
+                #img_l2_loss += self.pyramidl2_loss_fn(pred_img, gt_img)
+                # 1. end2end image loss
                 img_l2_loss = self.pyramidl2_loss_fn(pred_img, gt_img)
                 img_ssim_loss = self.ssim_loss_fn(pred_img, gt_img, mask.unsqueeze(0).unsqueeze(0))
                 img_loss = img_l2_loss + img_ssim_loss * self.args.ssim_weight
+
+                # 2. loss for albedo, L1 smooth
+                if False:
+                    grad_diff = kornia.filters.laplacian(pred_diff_albedo, 3)
+                    albedo_loss = torch.sum(kornia.losses.total_variation(grad_diff, reduction='sum'))
+                    grad_spec = kornia.filters.laplacian(pred_spec_albedo, 3)
+                    albedo_loss += torch.sum(kornia.losses.total_variation(grad_spec, reduction='sum'))
+                    albedo_loss *= 0.01
 
                 # calculate eik loss
                 eik_grad = results["normal"][mask]
@@ -583,22 +641,23 @@ class ModelBed:
                     roughrange_loss = (roughness - roughness_value).mean() * self.args.roughrange_weight
 
                 # calculate metallic eta k loss
-                if 'metallic_eta' in results:
-                    metal_eta = results["metallic_eta"][mask]
-                    metal_k = results["metallic_k"][mask]
-                    # metal_eta_value, metal_k_value = 0.198125, 5.631250
-                    metal_eta_value, metal_k_value = 1.0, 10.0
-                    metal_eta = metal_eta[metal_eta > metal_eta_value]
-                    metal_k = metal_k[metal_k > metal_k_value]
-                    metallicness_loss = (torch.abs(metal_eta - metal_eta_value)).mean() * self.args.metal_eta_weight
-                    metallicness_loss += (torch.abs(metal_k - metal_k_value)).mean() * self.args.metal_k_weight
+                if True:
+                    if 'metallic_eta' in results:
+                        metal_eta = results["metallic_eta"][mask]
+                        metal_k = results["metallic_k"][mask]
+                        # metal_eta_value, metal_k_value = 0.198125, 5.631250
+                        metal_eta_value, metal_k_value = 1.0, 10.0
+                        metal_eta = metal_eta[metal_eta > metal_eta_value]
+                        metal_k = metal_k[metal_k > metal_k_value]
+                        metallicness_loss = (torch.abs(metal_eta - metal_eta_value)).mean() * self.args.metal_eta_weight
+                        metallicness_loss += (torch.abs(metal_k - metal_k_value)).mean() * self.args.metal_k_weight
 
-                if 'dielectric_eta' in results:
-                    dielectric_eta = results['dielectric_eta'][mask]
-                    dielectricness_loss = (torch.abs(dielectric_eta - 1.5)).mean() * self.args.dielectric_eta_weight
+                    if 'dielectric_eta' in results:
+                        dielectric_eta = results['dielectric_eta'][mask]
+                        dielectricness_loss = (torch.abs(dielectric_eta - 1.5)).mean() * self.args.dielectric_eta_weight
 
             eik_loss = eik_loss / eik_cnt * self.args.eik_weight
-            loss = img_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
+            loss = img_loss + albedo_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
             loss.backward()
 
             self.sdf_optimizer.step()
@@ -623,6 +682,7 @@ class ModelBed:
                     img_loss.item(),
                     img_l2_loss.item(),
                     img_ssim_loss.item(),
+                    albedo_loss.item(),
                     eik_loss.item(),
                     roughrange_loss.item(),
                     metallicness_loss.item(),
@@ -632,7 +692,11 @@ class ModelBed:
 
                 for x in list(results.keys()):
                     del results[x]
-                self.validate_image(resize_ratio=0.5, global_step=global_step, idx=11)
+                if False:
+                    for idx in range(len(self.cameras)):
+                        self.validate_image(resize_ratio=0.5, global_step=global_step, idx=idx)
+                else:
+                    self.validate_image(resize_ratio=0.25, global_step=global_step, idx=12)
 
 
 def config_parser():
@@ -709,9 +773,11 @@ def main():
         network_list = ['color_network',
                         'diffuse_albedo_network',
                         'specular_albedo_network',
-                        'specular_roughness_network',
-                        'point_light_network']
-        testbed.train_comp(network_list=network_list, num_iter=100000)
+                        'specular_roughness_network']
+                        #'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
+                        #'point_light_network']
+
+        testbed.train_comp(network_list=network_list, opt_sdf=False, num_iter=100000)
 
     # if args.render_all:
     #     testbed.render_all()

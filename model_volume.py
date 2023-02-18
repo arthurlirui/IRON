@@ -29,6 +29,7 @@ class Runner:
         #     conf_text = f.read()
         #     conf_text = conf_text.replace("CASE_NAME", case)
         # print(conf_text)
+        #print(conf_text)
         self.conf = ConfigFactory.parse_string(conf_text)
         self.conf["dataset.data_dir"] = self.conf["dataset.data_dir"].replace("CASE_NAME", case)
         self.conf['dataset']['rgb_dir'] = self.conf['dataset']['rgb_dir'].replace("CASE_NAME", case)
@@ -36,8 +37,11 @@ class Runner:
         self.conf['dataset']['flash_dir'] = self.conf['dataset']['flash_dir'].replace("CASE_NAME", case)
         self.conf['dataset']['env_dir'] = self.conf['dataset']['env_dir'].replace("CASE_NAME", case)
         self.base_exp_dir = self.conf["general.base_exp_dir"]
-        self.rgb_exp_dir = self.conf["general.rgb_exp_dir"]
-        os.makedirs(self.rgb_exp_dir, exist_ok=True)
+        #self.rgb_exp_dir = self.conf["general.rgb_exp_dir"]
+        self.env_exp_dir = self.conf["general.env_exp_dir"]
+        self.flash_exp_dir = self.conf["general.flash_exp_dir"]
+        os.makedirs(self.env_exp_dir, exist_ok=True)
+        os.makedirs(self.flash_exp_dir, exist_ok=True)
         os.makedirs(self.base_exp_dir, exist_ok=True)
 
         #self.dataset = DatasetNIRRGB(self.conf["dataset"])
@@ -81,10 +85,16 @@ class Runner:
         # if self.dataset.enable_NIR:
         #     self.nir_network = RenderingNetwork(**self.conf["model.nir_network"]).to(self.device)
         self.color_network = RenderingNetwork(**self.conf["model.rendering_network"]).to(self.device)
-        params_to_train += list(self.nerf_outside.parameters())
-        params_to_train += list(self.sdf_network.parameters())
-        params_to_train += list(self.deviation_network.parameters())
-        params_to_train += list(self.color_network.parameters())
+        if self.dataset.enable_ENV:
+            params_to_train += list(self.nerf_outside.parameters())
+            params_to_train += list(self.sdf_network.parameters())
+            params_to_train += list(self.deviation_network.parameters())
+            params_to_train += list(self.color_network.parameters())
+        if self.dataset.enable_FLASH:
+            params_to_train += list(self.nerf_outside.parameters())
+            params_to_train += list(self.sdf_network.parameters())
+            params_to_train += list(self.deviation_network.parameters())
+            params_to_train += list(self.color_network.parameters())
         # if self.dataset.enable_RGB:
         #     params_to_train += list(self.color_network.parameters())
         # if self.dataset.enable_NIR:
@@ -100,6 +110,8 @@ class Runner:
             self.color_network,
             **self.conf["model.neus_renderer"]
         )
+        if self.dataset.enable_FLASH:
+            self.sdf_network.requires_grad_(requires_grad=True)
 
         # if self.dataset.enable_RGB:
         #     self.renderer = NeuSRenderer(
@@ -122,25 +134,29 @@ class Runner:
         # Load checkpoint
         latest_model_name = None
         if is_continue:
-            print(os.path.join(self.rgb_exp_dir, 'checkpoints'))
-            print(os.path.join(self.base_exp_dir, 'checkpoints'))
-            os.makedirs(os.path.join(self.rgb_exp_dir), exist_ok=True)
-            os.makedirs(os.path.join(self.rgb_exp_dir, 'checkpoints'), exist_ok=True)
-            os.makedirs(os.path.join(self.base_exp_dir), exist_ok=True)
-            os.makedirs(os.path.join(self.base_exp_dir, 'checkpoints'), exist_ok=True)
-            if self.dataset.enable_NIR:
-                latest_rgb_model_name = self.search_model_name(self.rgb_exp_dir)
-                latest_nir_model_name = self.search_model_name(self.base_exp_dir)
-                logging.info("Find checkpoint: rgb{}, nir{}".format(latest_rgb_model_name, latest_nir_model_name))
-                #if latest_rgb_model_name is not None and latest_nir_model_name is not None:
-                self.load_checkpoint_NIR(rgb_checkpoint_name=latest_rgb_model_name, nir_checkpoint_name=latest_nir_model_name)
-
-            if self.dataset.enable_RGB:
-                latest_model_name = self.search_model_name(self.rgb_exp_dir)
+            print('ENV:', os.path.join(self.env_exp_dir, 'checkpoints'))
+            print('FLASH:', os.path.join(self.flash_exp_dir, 'checkpoints'))
+            os.makedirs(os.path.join(self.env_exp_dir), exist_ok=True)
+            os.makedirs(os.path.join(self.env_exp_dir, 'checkpoints'), exist_ok=True)
+            os.makedirs(os.path.join(self.flash_exp_dir), exist_ok=True)
+            os.makedirs(os.path.join(self.flash_exp_dir, 'checkpoints'), exist_ok=True)
+            if self.dataset.enable_ENV:
+                # directly load env lighting case
+                latest_model_name = self.search_model_name(self.env_exp_dir)
                 if latest_model_name is not None:
                     logging.info("Find checkpoint: {}".format(latest_model_name))
-                    self.load_checkpoint(latest_model_name)
-
+                    self.load_checkpoint(self.env_exp_dir, latest_model_name)
+            if self.dataset.enable_FLASH:
+                # first find sdf from env lighting
+                latest_model_name = self.search_model_name(self.flash_exp_dir)
+                if latest_model_name is not None:
+                    logging.info("Find FLASH checkpoint: {}".format(latest_model_name))
+                    self.load_checkpoint(self.flash_exp_dir, latest_model_name)
+                else:
+                    latest_model_name = self.search_model_name(self.env_exp_dir)
+                    if latest_model_name is not None:
+                        logging.info("Find ENV checkpoint: {}".format(latest_model_name))
+                        self.load_checkpoint(self.env_exp_dir, latest_model_name)
 
         if self.mode[:5] == "train":
             self.file_backup()
@@ -266,14 +282,9 @@ class Runner:
                 mask = torch.ones_like(mask)
 
             mask_sum = mask.sum() + 1e-5
-            render_out = self.renderer.render(
-                rays_o,
-                rays_d,
-                near,
-                far,
-                background_rgb=background_rgb,
-                cos_anneal_ratio=self.get_cos_anneal_ratio(),
-            )
+            render_out = self.renderer.render(rays_o, rays_d, near, far,
+                                              background_rgb=background_rgb,
+                                              cos_anneal_ratio=self.get_cos_anneal_ratio())
             # elif data_type == 'nir':
             #     render_out = self.renderer_nir.render(
             #         rays_o,
@@ -334,7 +345,7 @@ class Runner:
                 print("iter:{:8>d} loss = {} lr={}".format(self.iter_step, loss, self.optimizer.param_groups[0]["lr"]))
 
             if self.iter_step % self.save_freq == 0:
-                self.save_checkpoint()
+                self.save_checkpoint(self.base_exp_dir)
 
             if self.iter_step % self.val_freq == 0:
                 # self.validate_image(data_type=data_type)
@@ -705,9 +716,9 @@ class Runner:
 
         copyfile(self.conf_path, os.path.join(self.base_exp_dir, "recording", "config.conf"))
 
-    def load_checkpoint(self, checkpoint_name):
+    def load_checkpoint(self, checkpoint_path, checkpoint_name):
         checkpoint = torch.load(
-            os.path.join(self.base_exp_dir, "checkpoints", checkpoint_name),
+            os.path.join(checkpoint_path, "checkpoints", checkpoint_name),
             map_location=self.device,
         )
         self.nerf_outside.load_state_dict(checkpoint["nerf"])
@@ -740,20 +751,20 @@ class Runner:
 
             logging.info("End")
 
-    def save_checkpoint(self):
+    def save_checkpoint(self, checkpoint_path):
         checkpoint = {
-            "nerf": self.nir_nerf_outside.state_dict(),
+            "nerf": self.nerf_outside.state_dict(),
             "sdf_network_fine": self.sdf_network.state_dict(),
             "variance_network_fine": self.deviation_network.state_dict(),
-            "color_network_fine": self.nir_network.state_dict(),
+            "color_network_fine": self.color_network.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "iter_step": self.iter_step}
 
-        os.makedirs(os.path.join(self.base_exp_dir, "checkpoints"), exist_ok=True)
+        os.makedirs(os.path.join(checkpoint_path, "checkpoints"), exist_ok=True)
         torch.save(
             checkpoint,
             os.path.join(
-                self.base_exp_dir,
+                checkpoint_path,
                 "checkpoints",
                 "ckpt_{:0>6d}.pth".format(self.iter_step),
             ),
