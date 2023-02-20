@@ -777,7 +777,7 @@ def main():
                         #'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
                         #'point_light_network']
 
-        testbed.train_comp(network_list=network_list, opt_sdf=False, num_iter=100000)
+        testbed.train_comp(network_list=network_list, opt_sdf=True, num_iter=100000)
 
     # if args.render_all:
     #     testbed.render_all()
