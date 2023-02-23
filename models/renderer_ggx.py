@@ -618,8 +618,8 @@ class CompositeRenderer(nn.Module):
         return specular_albedo * F
 
     def main_dielectric_reflection(self, D, G, cos_theta, eta, specular_albedo=1.0):
-        #F = self.dielectric_reflection(cos_theta, eta)
-        F = 0.04
+        F = self.dielectric_reflection(cos_theta, eta)
+        #F = 0.04
         return specular_albedo * F * D * G / (4.0 * torch.abs(cos_theta))
 
     def main_specular_reflection(self, D, G, F_dielectric, metallic, spec_tint, cos_theta, color, intensity, eta):
@@ -854,9 +854,9 @@ class CompositeRenderer(nn.Module):
             main_metallic_rgb *= light_intensity
             main_dielectric_rgb *= light_intensity
             #main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
-            #main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
+            main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
             #main_specular_rgb = main_dielectric_rgb
-            main_specular_rgb = main_metallic_rgb
+            #main_specular_rgb = main_metallic_rgb
         else:
             main_specular_rgb = torch.zeros_like(specular_albedo)
 

@@ -875,6 +875,7 @@ class DatasetGeneral:
             self.n_RGB = 0
             self.RGB_np = None
 
+        print(self.RGB_list)
         no_mask = False
         if no_mask:
             print("Not using masks")

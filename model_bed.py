@@ -67,7 +67,7 @@ class ModelBed:
         load_neus_checkpoint(neus_ckpt_fpath=self.args.neus_ckpt_fpath,
                              sdf_network=self.sdf_network,
                              color_network_dict=self.color_network_dict,
-                             load_diffuse_albedo=False)
+                             load_diffuse_albedo=True)
         # init init lighting
         dist = np.median([torch.norm(self.cameras[i].get_camera_origin()).item() for i in range(len(self.cameras))])
         init_light = args.init_light_scale * dist * dist
@@ -641,7 +641,7 @@ class ModelBed:
                     roughrange_loss = (roughness - roughness_value).mean() * self.args.roughrange_weight
 
                 # calculate metallic eta k loss
-                if True:
+                if False:
                     if 'metallic_eta' in results:
                         metal_eta = results["metallic_eta"][mask]
                         metal_k = results["metallic_k"][mask]
@@ -778,6 +778,8 @@ def main():
                         #'point_light_network']
 
         testbed.train_comp(network_list=network_list, opt_sdf=True, num_iter=100000)
+    if args.render_all:
+        testbed.render_all()
 
     # if args.render_all:
     #     testbed.render_all()

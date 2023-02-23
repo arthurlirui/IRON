@@ -363,7 +363,7 @@ class Runner:
                 # elif data_type == 'nir':
                 #     image_perm = torch.randperm(self.dataset.n_NIR)
                 # else:
-                #     image_perm = torch.randperm(self.dataset.n_RGB)
+                #     image_perm = torch.randperm(self.dataset.n_RGB)write
 
     def train_RGB(self):
         self.writer = SummaryWriter(log_dir=os.path.join(self.base_exp_dir, "logs"))
@@ -770,6 +770,94 @@ class Runner:
             ),
         )
 
+    def validate_image_rendering(self, idx=-1, resolution_level=-1):
+        if idx < 0:
+            idx = np.random.randint(self.dataset.n_RGB)
+        print("Validate: iter: {}, camera: {}".format(self.iter_step, idx))
+
+        if resolution_level < 0:
+            resolution_level = self.validate_resolution_level
+        rays_o, rays_d = self.dataset.gen_rays_at(idx, resolution_level=resolution_level)
+        H, W, _ = rays_o.shape
+        rays_o = rays_o.reshape(-1, 3).split(self.batch_size)
+        rays_d = rays_d.reshape(-1, 3).split(self.batch_size)
+
+        out_rgb_fine = []
+        out_normal_fine = []
+
+        for rays_o_batch, rays_d_batch in zip(rays_o, rays_d):
+            near, far = self.dataset.near_far_from_sphere(rays_o_batch, rays_d_batch, self.dataset.scale)
+            background_rgb = torch.ones([1, 3]) if self.use_white_bkgd else None
+            render_out = self.renderer.render(
+                rays_o_batch,
+                rays_d_batch,
+                near,
+                far,
+                cos_anneal_ratio=self.get_cos_anneal_ratio(),
+                background_rgb=background_rgb,
+            )
+            n_samples = self.renderer.n_samples + self.renderer.n_importance
+
+            def feasible(key):
+                return (key in render_out) and (render_out[key] is not None)
+
+            if feasible("color_fine"):
+                out_rgb_fine.append(render_out["color_fine"].detach().cpu().numpy())
+            if feasible("gradients") and feasible("weights"):
+                #n_samples = self.renderer.n_samples + self.renderer.n_importance
+                normals = render_out["gradients"] * render_out["weights"][:, :n_samples, None]
+                if feasible("inside_sphere"):
+                    normals = normals * render_out["inside_sphere"][..., None]
+                normals = normals.sum(dim=1).detach().cpu().numpy()
+                out_normal_fine.append(normals)
+            del render_out
+
+        img_fine = None
+        RGB_fine = None
+        NIR_fine = None
+        if len(out_rgb_fine) > 0:
+            img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3, -1]) * 256).clip(0, 255)
+
+        normal_img = None
+        if len(out_normal_fine) > 0:
+            normal_img = np.concatenate(out_normal_fine, axis=0)
+            rot = np.linalg.inv(self.dataset.pose_RGB[idx, :3, :3].detach().cpu().numpy())
+            normal_img = (np.matmul(rot[None, :, :], normal_img[:, :, None]).reshape([H, W, 3, -1]) * 128 + 128).clip(0, 255)
+
+        os.makedirs(os.path.join(self.base_exp_dir, "validations_fine"), exist_ok=True)
+        os.makedirs(os.path.join(self.base_exp_dir, "normals"), exist_ok=True)
+        os.makedirs(os.path.join(self.base_exp_dir, "validations_fine_rendering"), exist_ok=True)
+        for i in range(img_fine.shape[-1]):
+            if len(out_rgb_fine) > 0:
+                img_path = os.path.join(
+                    self.base_exp_dir,
+                    "validations_fine_rendering",
+                    "{:0>8d}_{}_{}.png".format(self.iter_step, i, idx))
+                imggt = self.dataset.image_at(idx, resolution_level=resolution_level)
+                if len(imggt.shape) == 2:
+                    imggt = np.stack([imggt, imggt, imggt], axis=-1)
+                elif imggt.shape[-1] == 1:
+                    imggt = np.concatenate([imggt, imggt, imggt], axis=-1)
+                #img = np.concatenate([img_fine[..., i], imggt], axis=0).astype('uint8')
+                filename = os.path.basename(self.dataset.RGB_list[idx])
+                img_path = os.path.join(
+                    self.base_exp_dir,
+                    "validations_fine_rendering",
+                    "{:0>8d}_{}_{}_render.png".format(self.iter_step, filename, idx))
+                self.dataset.image_writer(img_path, img_fine[..., i])
+
+                img_path = os.path.join(
+                    self.base_exp_dir,
+                    "validations_fine_rendering",
+                    "{:0>8d}_{}_{}_gt.png".format(self.iter_step, filename, idx))
+                self.dataset.image_writer(img_path, imggt)
+
+            if len(out_normal_fine) > 0:
+                normal_path = os.path.join(self.base_exp_dir,
+                                           "validations_fine_rendering",
+                                           "{:0>8d}_{}_{}_normal.png".format(self.iter_step, filename, idx))
+                self.dataset.image_writer(normal_path, normal_img[..., i].astype('uint8'))
+
     def validate_image(self, idx=-1, resolution_level=-1):
         if idx < 0:
             idx = np.random.randint(self.dataset.n_RGB)
@@ -841,14 +929,13 @@ class Runner:
             #     rot = np.linalg.inv(self.dataset.pose_NIR[idx, :3, :3].detach().cpu().numpy())
             # else:
             #     pass
-            normal_img = (np.matmul(rot[None, :, :], normal_img[:, :, None]).reshape([H, W, 3, -1]) * 128 + 128).clip(
-                0, 255
-            )
+            normal_img = (np.matmul(rot[None, :, :], normal_img[:, :, None]).reshape([H, W, 3, -1]) * 128 + 128).clip(0, 255)
 
         os.makedirs(os.path.join(self.base_exp_dir, "validations_fine"), exist_ok=True)
         os.makedirs(os.path.join(self.base_exp_dir, "normals"), exist_ok=True)
 
         #print(normal_img.shape, img_fine.shape)
+        #os.makedirs(os.path.join(self.base_exp_dir, "validations_fine_rendering"), exist_ok=True)
         for i in range(img_fine.shape[-1]):
             if len(out_rgb_fine) > 0:
                 # if False:
@@ -863,9 +950,11 @@ class Runner:
                     imggt = np.stack([imggt, imggt, imggt], axis=-1)
                 elif imggt.shape[-1] == 1:
                     imggt = np.concatenate([imggt, imggt, imggt], axis=-1)
+                #img = np.concatenate([img_fine[..., i], imggt], axis=0).astype('uint8')
                 img = np.concatenate([img_fine[..., i], imggt], axis=0).astype('uint8')
                 #print(img.shape)
                 self.dataset.image_writer(img_path, img)
+
             if len(out_normal_fine) > 0:
                 normal_path = os.path.join(self.base_exp_dir,
                                            "normals",
@@ -1009,7 +1098,11 @@ if __name__ == "__main__":
         #     runner.train_NIRRGB(data_type='rgb')
     elif args.mode == "validata_image":
         #runner.train_NIRRGB(data_type='rgb')
-        runner.validate_image(idx=10, resolution_level=1)
+        #os.makedirs('validations_fine_rendering', exist_ok=True)
+        for idx in range(runner.dataset.n_RGB):
+            if idx != 22:
+                continue
+            runner.validate_image_rendering(idx=idx, resolution_level=1)
     elif args.mode == "validate_mesh":
         #runner.train_NIRRGB(data_type='rgb')
         runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
