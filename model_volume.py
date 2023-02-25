@@ -995,28 +995,28 @@ class Runner:
         bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
         bound_max = torch.tensor(self.dataset.object_bbox_max, dtype=torch.float32)
 
-        if self.dataset.enable_RGB:
-            vertices, triangles = self.renderer.extract_geometry(bound_min, bound_max,
-                                                                 resolution=resolution, threshold=threshold)
-            os.makedirs(os.path.join(self.base_exp_dir, "meshes"), exist_ok=True)
-            if world_space:
-                vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
-            mesh = trimesh.Trimesh(vertices, triangles)
-            mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}_rgb.ply".format(self.iter_step)))
-            logging.info("End")
+        #if self.dataset.enable_RGB:
+        vertices, triangles = self.renderer.extract_geometry(bound_min, bound_max,
+                                                             resolution=resolution, threshold=threshold)
+        os.makedirs(os.path.join(self.base_exp_dir, "meshes"), exist_ok=True)
+        if world_space:
+            vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
+        mesh = trimesh.Trimesh(vertices, triangles)
+        mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}_rgb.ply".format(self.iter_step)))
+        logging.info("End")
 
-        if self.dataset.enable_NIR:
-            vertices, triangles = self.renderer_nir.extract_geometry(bound_min, bound_max,
-                                                                     resolution=resolution, threshold=threshold)
-            os.makedirs(os.path.join(self.base_exp_dir, "meshes"), exist_ok=True)
-
-            if world_space:
-                vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
-
-            mesh = trimesh.Trimesh(vertices, triangles)
-            mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}_nir.ply".format(self.iter_step)))
-
-            logging.info("End")
+        # if self.dataset.enable_NIR:
+        #     vertices, triangles = self.renderer_nir.extract_geometry(bound_min, bound_max,
+        #                                                              resolution=resolution, threshold=threshold)
+        #     os.makedirs(os.path.join(self.base_exp_dir, "meshes"), exist_ok=True)
+        #
+        #     if world_space:
+        #         vertices = vertices * self.dataset.scale_mats_np[0][0, 0] + self.dataset.scale_mats_np[0][:3, 3][None]
+        #
+        #     mesh = trimesh.Trimesh(vertices, triangles)
+        #     mesh.export(os.path.join(self.base_exp_dir, "meshes", "{:0>8d}_nir.ply".format(self.iter_step)))
+        #
+        #     logging.info("End")
 
     def interpolate_view(self, img_idx_0, img_idx_1):
         images = []
@@ -1101,7 +1101,7 @@ if __name__ == "__main__":
         #os.makedirs('validations_fine_rendering', exist_ok=True)
         for idx in range(runner.dataset.n_RGB):
             if idx != 22:
-                continue
+                pass
             runner.validate_image_rendering(idx=idx, resolution_level=1)
     elif args.mode == "validate_mesh":
         #runner.train_NIRRGB(data_type='rgb')

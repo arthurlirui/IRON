@@ -31,7 +31,7 @@ class ModelBed:
         #self.set_render_fn(render_fn=render_fn)
         sdf_network = init_sdf_network_dict()
         color_network_dict = init_rendering_network_dict(renderer_name=self.renderer_name)
-        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
+        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-6)
         color_optimizer_dict = choose_optmizer(renderer_name=self.renderer_name, network_dict=color_network_dict)
         #renderer = choose_renderer(renderer_name=self.renderer_name)
         log_dir = os.path.join(self.args.out_dir, "logs")
@@ -531,8 +531,8 @@ class ModelBed:
         ic(fill_holes, handle_edges, is_training, self.args.inv_gamma_gt)
 
         global_step = self.args.num_iters
-        #start_step = self.start_step
-        start_step = 0
+        start_step = self.start_step
+        #start_step = 0
         #num_iter = self.num_iters
         num_gt_images = self.gt_images.shape[0]
 
@@ -674,7 +674,7 @@ class ModelBed:
             if global_step % 1000 == 0:
                 self.save_checkpoint(global_step=global_step)
 
-            if global_step % 300 == 0:
+            if global_step % 100 == 0:
                 ic(
                     self.args.out_dir,
                     global_step,
@@ -773,9 +773,9 @@ def main():
         network_list = ['color_network',
                         'diffuse_albedo_network',
                         'specular_albedo_network',
-                        'specular_roughness_network']
+                        'specular_roughness_network',
                         #'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
-                        #'point_light_network']
+                        'point_light_network']
 
         testbed.train_comp(network_list=network_list, opt_sdf=True, num_iter=100000)
     if args.render_all:
