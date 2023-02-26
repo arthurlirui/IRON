@@ -1096,7 +1096,7 @@ if __name__ == "__main__":
         #     runner.train_NIRRGB(data_type='rgb')
         # else:
         #     runner.train_NIRRGB(data_type='rgb')
-    elif args.mode == "validata_image":
+    elif args.mode == "validate_image":
         #runner.train_NIRRGB(data_type='rgb')
         #os.makedirs('validations_fine_rendering', exist_ok=True)
         for idx in range(runner.dataset.n_RGB):
@@ -1105,7 +1105,7 @@ if __name__ == "__main__":
             runner.validate_image_rendering(idx=idx, resolution_level=1)
     elif args.mode == "validate_mesh":
         #runner.train_NIRRGB(data_type='rgb')
-        runner.validate_mesh(world_space=True, resolution=512, threshold=args.mcube_threshold)
+        runner.validate_mesh(world_space=True, resolution=1024, threshold=args.mcube_threshold)
     elif args.mode.startswith("interpolate"):  # Interpolate views given two image indices
         _, img_idx_0, img_idx_1 = args.mode.split("_")
         img_idx_0 = int(img_idx_0)
