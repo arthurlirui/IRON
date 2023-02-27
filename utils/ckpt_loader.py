@@ -55,7 +55,10 @@ def load_neus_checkpoint(neus_ckpt_fpath, sdf_network, color_network_dict, load_
             sdf_network.load_state_dict(ckpt["sdf_network_fine"])
             # load sdf, train diffuse albedo and specular albedo for RGB images
             if load_diffuse_albedo:
-                color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+                try:
+                    color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+                except:
+                    ic(f"Loading diffuse from neus fail")
             # color_network_dict["specular_albedo_network"].load_state_dict(ckpt["color_network_fine"])
         except:
             traceback.print_exc()

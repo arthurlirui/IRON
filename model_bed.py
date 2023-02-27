@@ -47,13 +47,14 @@ class ModelBed:
         self.sdf_optimizer = sdf_optimizer
         self.color_optimizer_dict = color_optimizer_dict
 
-        image_fpaths, gt_images, Ks, W2Cs = self.load_dataset(data_dir=self.args.data_dir,
-                                                              folder_name=self.args.folder_name,
-                                                              cam_dict_name=self.args.cam_file_name,
-                                                              use_mask=self.args.use_mask,
-                                                              use_trans=self.args.use_trans)
+        image_fpaths, gt_images, Ks, W2Cs, mask_images = self.load_dataset(data_dir=self.args.data_dir,
+                                                                           folder_name=self.args.folder_name,
+                                                                           cam_dict_name=self.args.cam_file_name,
+                                                                           use_mask=self.args.use_mask,
+                                                                           use_trans=self.args.use_trans)
         self.image_fpaths = image_fpaths
         self.gt_images = gt_images
+        self.mask_images = mask_images
         self.Ks = Ks
         self.W2Cs = W2Cs
         self.cameras = []
@@ -96,11 +97,11 @@ class ModelBed:
         self.num_iters = self.args.num_iters
 
     def load_dataset(self, data_dir, folder_name, cam_dict_name, use_mask=True, use_trans=False):
-        image_fpaths, gt_images, Ks, W2Cs = load_dataset_general(data_dir=data_dir,
-                                                                 folder_name=folder_name,
-                                                                 file_name=cam_dict_name,
-                                                                 use_mask=use_mask, use_trans=use_trans)
-        return image_fpaths, gt_images, Ks, W2Cs
+        image_fpaths, gt_images, Ks, W2Cs, mask_images = load_dataset_general(data_dir=data_dir,
+                                                                              folder_name=folder_name,
+                                                                              file_name=cam_dict_name,
+                                                                              use_mask=use_mask, use_trans=use_trans)
+        return image_fpaths, gt_images, Ks, W2Cs, mask_images
 
     def set_render_fn(self, render_fn=None):
         self.render_fn = render_fn
@@ -364,6 +365,7 @@ class ModelBed:
         depth = np.log(np.tile(results["depth"][:, :, np.newaxis] + 1e-6, (1, 1, 3)))
         costheta = np.tile(results["costheta"][:, :, np.newaxis], (1, 1, 3))
         costheta_mask = costheta > 0.9
+        mask = results["convergent_mask"]
 
         metallic_rgb = results['metallic_rgb']
         dielectric_rgb = results['dielectric_rgb']
@@ -398,7 +400,7 @@ class ModelBed:
         img_list = [gt_color_im, color_im, normal_im, edge_mask_im,
                     diffuse_color_im, specular_color_im, diffuse_albedo_im, specular_albedo_im,
                     depth, metallic_rgb, dielectric_rgb, specular_roughness_im,
-                    costheta, costheta_mask]
+                    costheta, costheta_mask, mask]
                     #metal_eta, dielectric_eta, costheta]
         im = concatenate_result(image_list=img_list, imarray_length=4)
         file_name = f"logim_{global_step}_{os.path.basename(self.image_fpaths[idx])}"
@@ -428,6 +430,9 @@ class ModelBed:
             camera_crop, gt_color_crop = self.cameras[idx].crop_region(trgt_W=self.args.patch_size,
                                                                        trgt_H=self.args.patch_size,
                                                                        image=self.gt_images[idx])
+            camera_crop, mask_crop = self.cameras[idx].crop_region(trgt_W=self.args.patch_size,
+                                                                   trgt_H=self.args.patch_size,
+                                                                   image=self.mask_images[idx])
 
             results = render_camera(camera_crop,
                                     self.sdf_network,
@@ -506,6 +511,7 @@ class ModelBed:
                     dielectricness_loss = (torch.abs(dielectric_eta - 1.5)).mean() * self.args.dielectric_eta_weight
 
             eik_loss = eik_loss / eik_cnt * self.args.eik_weight
+
             loss = img_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
             loss.backward()
 
@@ -586,6 +592,10 @@ class ModelBed:
                                                                        trgt_H=self.args.patch_size,
                                                                        image=self.gt_images[idx])
 
+            camera_crop, mask_crop = self.cameras[idx].crop_region(trgt_W=self.args.patch_size,
+                                                                   trgt_H=self.args.patch_size,
+                                                                   image=self.mask_images[idx])
+
             results = render_camera(camera_crop,
                                     self.sdf_network,
                                     self.raytracer,
@@ -616,6 +626,7 @@ class ModelBed:
             roughrange_loss = torch.Tensor([0.0]).cuda()
             metallicness_loss = torch.Tensor([0.0]).cuda()
             dielectricness_loss = torch.Tensor([0.0]).cuda()
+            mask_loss = torch.Tensor([0.0]).cuda()
 
             eik_points = torch.empty(camera_crop.H * camera_crop.W // 2, 3).cuda().float().uniform_(-1.0, 1.0)
             eik_grad = self.sdf_network.gradient(eik_points).view(-1, 3)
@@ -625,6 +636,8 @@ class ModelBed:
             if mask.any():
                 pred_img = results["color"].permute(2, 0, 1).unsqueeze(0)
                 gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device, dtype=pred_img.dtype)
+                mask_img = mask_crop.to(mask.device, dtype=mask.dtype)
+
                 pred_diff_img = results["diffuse_color"].permute(2, 0, 1).unsqueeze(0)
                 pred_spec_img = results["specular_color"].permute(2, 0, 1).unsqueeze(0)
                 pred_diff_albedo = results["diffuse_albedo"].permute(2, 0, 1).unsqueeze(0)
@@ -675,6 +688,8 @@ class ModelBed:
                 if roughness.numel() > 0:
                     roughrange_loss = (roughness - roughness_value).mean() * self.args.roughrange_weight
 
+                #mask_loss = torch.nn.MSELoss(reduction='mean')(torch.tensor(mask, dtype=torch.float), mask_img[:, :, 0])
+
                 # calculate metallic eta k loss
                 if False:
                     if 'metallic_eta' in results:
@@ -691,8 +706,11 @@ class ModelBed:
                         dielectric_eta = results['dielectric_eta'][mask]
                         dielectricness_loss = (torch.abs(dielectric_eta - 1.5)).mean() * self.args.dielectric_eta_weight
 
+            # maskloss
+
+            # mask_loss = 1.0 - (torch.sum(mask & mask_img[:, :, 0], dtype=torch.float) / torch.sum(mask | mask_img[:, :, 0], dtype=torch.float))
             eik_loss = eik_loss / eik_cnt * self.args.eik_weight
-            loss = img_loss + albedo_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
+            loss = img_loss + 100 * mask_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
             loss.backward()
 
             self.sdf_optimizer.step()
@@ -701,7 +719,7 @@ class ModelBed:
 
             if global_step % 500 == 0:
                 loss_dict = {'loss': loss, 'img_loss': img_loss, 'img_l2_loss': img_l2_loss,
-                             'img_ssim_loss': img_ssim_loss,
+                             'img_ssim_loss': img_ssim_loss, 'mask_loss': mask_loss,
                              'eik_loss': eik_loss, 'roughrange_loss': roughrange_loss,
                              'metallicness_loss': metallicness_loss, 'dielectricness_loss': dielectricness_loss}
                 self.write_loss_all(loss_dict=loss_dict, global_step=global_step)
@@ -717,6 +735,7 @@ class ModelBed:
                     img_loss.item(),
                     img_l2_loss.item(),
                     img_ssim_loss.item(),
+                    mask_loss.item(),
                     albedo_loss.item(),
                     eik_loss.item(),
                     roughrange_loss.item(),

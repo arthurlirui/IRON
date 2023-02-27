@@ -1174,11 +1174,14 @@ def load_dataset_general(data_dir, folder_name='images', file_name='cam_dict.jso
 
         if use_mask:
             maski = maskreader(masklist[i]) / 255.0
+
             h, w, d = im.shape
             if d == 1:
                 im[maski[:, :, 0] < 0.1] = 0
             else:
                 im[maski < 0.1] = 0
+        else:
+            maski = np.ones_like(im)
 
         if not filename in cam_dict:
             continue
@@ -1190,12 +1193,14 @@ def load_dataset_general(data_dir, folder_name='images', file_name='cam_dict.jso
 
         image_fpaths.append(fpath)
         gt_images.append(torch.from_numpy(im))
+        mask_images.append(torch.from_numpy(maski))
         Ks.append(torch.from_numpy(K))
         W2Cs.append(torch.from_numpy(W2C))
     gt_images = torch.stack(gt_images, dim=0)
+    mask_images = torch.stack(mask_images, dim=0)
     Ks = torch.stack(Ks, dim=0)
     W2Cs = torch.stack(W2Cs, dim=0)
-    return image_fpaths, gt_images, Ks, W2Cs
+    return image_fpaths, gt_images, Ks, W2Cs, mask_images
 
 
 def load_dataset_NIRRGB_alignRGB(datadir, folder_name='images', file_name='cam_dict.json', use_mask=True):

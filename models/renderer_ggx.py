@@ -797,8 +797,8 @@ class CompositeRenderer(nn.Module):
         #anisotropic = torch.clamp(params['anisotropic'], min=0.00001)
         #flatness = torch.clamp(params['flatness'], min=0.00001)
         #spec_trans = torch.clamp(params['spec_trans'], min=0.00001)
-        #metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
-        #dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
+        metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
+        dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
         #clearcoat = torch.clamp(params['clearcoat'], min=0.00001)
         #eta = torch.clamp(params['eta'], min=0.000001)
         eta = 1.48958738
@@ -824,8 +824,6 @@ class CompositeRenderer(nn.Module):
 
         F_metalic = self.metallic_reflection(cos_theta_i, metallic_eta, metallic_k)
         F_dielectric = self.dielectric_reflection(cos_theta_i, dielectric_eta)
-
-
 
         #cosTheta2 = cos_theta_i * cos_theta_i
         #root = cosTheta2 + (1.0 - cosTheta2) / (alpha_u * alpha_v + 1e-10)
@@ -856,10 +854,12 @@ class CompositeRenderer(nn.Module):
             main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, metallic_eta, metallic_k, specular_albedo)
             #main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, eta_cu, k_cu, specular_albedo)
             main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, dielectric_eta, specular_albedo)
-            main_metallic_rgb *= light_intensity
-            main_dielectric_rgb *= light_intensity
+            #main_metallic_rgb *= light_intensity
+            #main_dielectric_rgb *= light_intensity
             #main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
-            main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
+            F_dielectric = 0.03867
+            main_specular_rgb = light_intensity * specular_albedo * F_dielectric * D * G / (4.0 * torch.abs(cos_theta_i))
+            #main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
             #main_specular_rgb = main_dielectric_rgb
             #main_specular_rgb = main_metallic_rgb
         else:
