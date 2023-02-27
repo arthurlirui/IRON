@@ -822,6 +822,11 @@ class CompositeRenderer(nn.Module):
         D = self.calc_D_specular(cos_theta_i, eta)
         G = self.calc_G_specular(cos_theta_i, alpha_u, alpha_v)
 
+        F_metalic = self.metallic_reflection(cos_theta_i, metallic_eta, metallic_k)
+        F_dielectric = self.dielectric_reflection(cos_theta_i, dielectric_eta)
+
+
+
         #cosTheta2 = cos_theta_i * cos_theta_i
         #root = cosTheta2 + (1.0 - cosTheta2) / (alpha_u * alpha_v + 1e-10)
         #D = 1.0 / (np.pi * alpha_u * alpha_v * root * root + 1e-10)

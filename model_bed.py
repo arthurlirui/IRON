@@ -1,5 +1,6 @@
 import os
 import torch
+from torch import nn
 from models.image_losses import PyramidL2Loss, ssim_loss_fn
 from models.dataset import load_dataset_general
 from models.raytracer import RayTracer, Camera, render_camera
@@ -18,6 +19,7 @@ import tqdm
 import configargparse
 from models.network_conf import choose_optmizer, choose_renderer, choose_renderer_func
 import kornia
+from models.export_materials import export_materials
 
 
 class ModelBed:
@@ -25,7 +27,8 @@ class ModelBed:
         self.args = args
         self.use_cuda = use_cuda
 
-        self.renderer_name = 'comp'
+        #self.renderer_name = 'comp2'
+        self.renderer_name = args.renderer_name
         self.device = 'cuda:0'
         self.raytracer = RayTracer()
         #self.set_render_fn(render_fn=render_fn)
@@ -67,7 +70,7 @@ class ModelBed:
         load_neus_checkpoint(neus_ckpt_fpath=self.args.neus_ckpt_fpath,
                              sdf_network=self.sdf_network,
                              color_network_dict=self.color_network_dict,
-                             load_diffuse_albedo=True)
+                             load_diffuse_albedo=args.init_neus_color)
         # init init lighting
         dist = np.median([torch.norm(self.cameras[i].get_camera_origin()).item() for i in range(len(self.cameras))])
         init_light = args.init_light_scale * dist * dist
@@ -88,7 +91,7 @@ class ModelBed:
         # choose renderer
         self.renderer = choose_renderer(renderer_name=self.renderer_name)
 
-        self.fill_holes = False
+        self.fill_holes = self.args.fill_hole
         self.handle_edges = not self.args.no_edgesample
         self.num_iters = self.args.num_iters
 
@@ -102,7 +105,7 @@ class ModelBed:
     def set_render_fn(self, render_fn=None):
         self.render_fn = render_fn
 
-    def get_material_comp(self, points, normals, features):
+    def get_material_comp(self, points, normals, features, renderer_name='comp2'):
         res = {}
         # configure (1)
         #diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
@@ -111,9 +114,13 @@ class ModelBed:
         #diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, None, features).abs()
         #specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, -normals, features).abs()
         #specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
+        if renderer_name == 'comp2':
+            diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
+            specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, None, features).abs()
 
-        diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
-        specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, -normals, features).abs()
+        if renderer_name == 'comp':
+            diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
+            specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, -normals, features).abs()
 
         metallic = self.color_network_dict["metallic_network"](points, normals, None, features).abs()
         specular_roughness = self.color_network_dict["specular_roughness_network"](points, normals, None, features).abs()
@@ -252,7 +259,7 @@ class ModelBed:
         with torch.no_grad():
             if not use_no_translation:
                 mesh_name = 'mesh.obj'
-                export_mesh(sdf_fn, os.path.join(export_out_dir, mesh_name))
+                export_mesh(sdf_fn, os.path.join(export_out_dir, mesh_name), resolution=512, max_n_pts=100000)
                 os.system(
                     f"{self.blender_fpath} --background --python models/export_uv.py {os.path.join(export_out_dir, mesh_name)} {os.path.join(export_out_dir, mesh_name)}"
                 )
@@ -262,11 +269,39 @@ class ModelBed:
                 os.system(
                     f"{self.blender_fpath} --background --python models/export_uv.py {os.path.join(export_out_dir, mesh_name)} {os.path.join(export_out_dir, mesh_name)}")
 
+        # class MaterialPredictor(nn.Module):
+        #     def __init__(self, sdf_network, color_network_dict):
+        #         super().__init__()
+        #         self.sdf_network = sdf_network
+        #         self.color_network_dict = color_network_dict
+        #
+        #     def forward(self, points):
+        #         _, features, normals = self.sdf_network.get_all(points, is_training=False)
+        #         normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
+        #         if False:
+        #             diffuse_albedo, specular_albedo, specular_roughness = get_materials_multi(color_network_dict,
+        #                                                                                       points, normals, features)
+        #         if True:
+        #             res = get_materials_comp(color_network_dict, points, normals, features)
+        #             diffuse_albedo = res['diffuse_albedo']
+        #             specular_albedo = res['specular_albedo']
+        #             specular_roughness = res['specular_roughness']
+        #         return diffuse_albedo, specular_albedo, specular_roughness
+
+        # ic("Exporting materials...")
+        # #material_predictor = MaterialPredictor(self.sdf_network, self.color_network_dict)
+        # with torch.no_grad():
+        #     export_materials(os.path.join(export_out_dir, mesh_name), material_predictor, export_out_dir)
+        #
+        # ic(f"Exported mesh and materials to: {export_out_dir}")
+
+
     def export_all(self, global_step=-1):
         #### export mesh and materials
         export_out_dir = os.path.join(self.args.out_dir, f"mesh_and_materials_{global_step}")
         os.makedirs(export_out_dir, exist_ok=True)
-        self.export_mesh_and_materials(export_out_dir, self.sdf_network, self.color_network_dict)
+        #self.export_mesh_and_materials(export_out_dir, self.sdf_network, self.color_network_dict)
+        self.export_mesh_and_materials(export_out_dir)
 
     def write_loss_all(self, loss_dict={}, global_step=-1):
         self.writer.add_scalar("loss/loss", loss_dict['loss'], global_step)
@@ -717,6 +752,8 @@ def config_parser():
 
     parser.add_argument("--plot_image_name", type=str, default=None, help="image to plot during training")
     parser.add_argument("--no_edgesample", action="store_true", help="whether to disable edge sampling")
+    parser.add_argument("--fill_hole", action="store_true", help="whether to fill hole")
+    parser.add_argument("--init_neus_color", action="store_true", help="whether to init by neus color")
     parser.add_argument(
         "--inv_gamma_gt", action="store_true", help="whether to inverse gamma correct the ground-truth photos"
     )
@@ -749,6 +786,7 @@ def config_parser():
         help="whether to render the input image set NIR",
     )
     parser.add_argument("--cam_file_name", type=str, default='cam_dict_norm.json', help="cam dict file name")
+    parser.add_argument("--renderer_name", type=str, default='comp2', help="renderer name in configure file")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--use_mask",
                         action="store_true",
@@ -778,8 +816,12 @@ def main():
                         'point_light_network']
 
         testbed.train_comp(network_list=network_list, opt_sdf=True, num_iter=100000)
+
     if args.render_all:
         testbed.render_all()
+
+    if args.export_all:
+        testbed.export_all()
 
     # if args.render_all:
     #     testbed.render_all()

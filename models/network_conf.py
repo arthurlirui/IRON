@@ -185,6 +185,124 @@ def init_rendering_network_dict(renderer_name='comp'):
             ).cuda(),
             "point_light_network": PointLightNetwork().cuda(),
         }
+    elif renderer_name == 'comp2':
+        color_network_dict = {
+            "color_network": RenderingNetwork(
+                d_in=9,
+                d_out=3,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=4,
+                multires_view=4,
+                mode="idr",
+                squeeze_out=True,
+            ).cuda(),
+            "diffuse_albedo_network": RenderingNetwork(
+                d_in=9,
+                d_out=3,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=8,
+                multires=10,
+                multires_view=4,
+                mode="idr",
+                squeeze_out=True,
+                skip_in=(4,),
+            ).cuda(),
+            "specular_albedo_network": RenderingNetwork(
+                d_in=6,
+                d_out=3,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=4,
+                multires=6,
+                multires_view=-1,
+                mode="no_view_dir",
+                squeeze_out=False,
+                output_bias=0.4,
+                output_scale=0.1,
+            ).cuda(),
+            "specular_roughness_network": RenderingNetwork(
+                d_in=6,
+                d_out=1,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=4,
+                multires=6,
+                multires_view=-1,
+                mode="no_view_dir",
+                squeeze_out=False,
+                output_bias=0.1,
+                output_scale=0.1,
+            ).cuda(),
+            "point_light_network": PointLightNetwork().cuda(),
+            "metallic_network": RenderingNetwork(
+                d_in=6,
+                d_out=1,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=4,
+                multires=6,
+                multires_view=-1,
+                mode="no_view_dir",
+                squeeze_out=False,
+                output_bias=0.1,
+                output_scale=0.1,
+            ).cuda(),
+            "dielectric_network": RenderingNetwork(
+                d_in=6,
+                d_out=1,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=4,
+                multires=6,
+                multires_view=-1,
+                mode="no_view_dir",
+                squeeze_out=False,
+                output_bias=0.1,
+                output_scale=0.1,
+            ).cuda(),
+            "metallic_eta_network": RenderingNetwork(
+                d_in=6,
+                d_out=1,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=4,
+                multires=6,
+                multires_view=-1,
+                mode="no_view_dir",
+                squeeze_out=False,
+                output_bias=0.1,
+                output_scale=0.1,
+            ).cuda(),
+            "metallic_k_network": RenderingNetwork(
+                d_in=6,
+                d_out=1,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=4,
+                multires=6,
+                multires_view=-1,
+                mode="no_view_dir",
+                squeeze_out=False,
+                output_bias=0.1,
+                output_scale=0.1,
+            ).cuda(),
+            "dielectric_eta_network": RenderingNetwork(
+                d_in=6,
+                d_out=1,
+                d_feature=256,
+                d_hidden=256,
+                n_layers=4,
+                multires=6,
+                multires_view=-1,
+                mode="no_view_dir",
+                squeeze_out=False,
+                output_bias=0.1,
+                output_scale=0.1,
+            ).cuda()
+        }
+
     elif renderer_name == 'comp':
         color_network_dict = {
             "color_network": RenderingNetwork(
@@ -420,7 +538,7 @@ def choose_optmizer(renderer_name='comp', network_name_list=[], network_dict={})
             "point_light_network": torch.optim.Adam(network_dict["point_light_network"].parameters(), lr=1e-2),
         }
         return color_optimizer_dict
-    if renderer_name == 'comp':
+    if renderer_name == 'comp' or renderer_name == 'comp2':
         color_optimizer_dict = {
             "color_network": torch.optim.Adam(network_dict["color_network"].parameters(), lr=1e-4),
             "diffuse_albedo_network": torch.optim.Adam(network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
@@ -455,7 +573,7 @@ def choose_renderer(renderer_name='comp'):
                                  dielectric=dielectric_renderer,
                                  smooth_conductor=conductor_renderer,
                                  conductor=rough_conductor_renderer, use_cuda=True)
-    if renderer_name == 'comp':
+    if renderer_name == 'comp' or renderer_name == 'comp2':
         renderer = CompositeRenderer(use_cuda=True)
     return renderer
 
