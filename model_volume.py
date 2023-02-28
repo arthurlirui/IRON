@@ -110,8 +110,8 @@ class Runner:
             self.color_network,
             **self.conf["model.neus_renderer"]
         )
-        if self.dataset.enable_FLASH:
-            self.sdf_network.requires_grad_(requires_grad=True)
+        #if self.dataset.enable_FLASH:
+        #    self.sdf_network.requires_grad_(requires_grad=True)
 
         # if self.dataset.enable_RGB:
         #     self.renderer = NeuSRenderer(
@@ -1100,8 +1100,8 @@ if __name__ == "__main__":
         #runner.train_NIRRGB(data_type='rgb')
         #os.makedirs('validations_fine_rendering', exist_ok=True)
         for idx in range(runner.dataset.n_RGB):
-            if idx != 22:
-                pass
+            #if idx != 22:
+            #    pass
             runner.validate_image_rendering(idx=idx, resolution_level=1)
     elif args.mode == "validate_mesh":
         #runner.train_NIRRGB(data_type='rgb')

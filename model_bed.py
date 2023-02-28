@@ -30,7 +30,11 @@ class ModelBed:
         #self.renderer_name = 'comp2'
         self.renderer_name = args.renderer_name
         self.device = 'cuda:0'
-        self.raytracer = RayTracer()
+        sdf_threshold = 1.0e-7
+        sphere_tracing_iters = 16
+        n_steps = 128
+        max_num_pts = 400000
+        self.raytracer = RayTracer(sdf_threshold, sphere_tracing_iters, n_steps, max_num_pts)
         #self.set_render_fn(render_fn=render_fn)
         sdf_network = init_sdf_network_dict()
         color_network_dict = init_rendering_network_dict(renderer_name=self.renderer_name)
