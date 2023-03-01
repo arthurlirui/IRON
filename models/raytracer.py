@@ -324,13 +324,15 @@ class Camera(object):
         )
         return uv
 
-    def crop_region(self, trgt_W, trgt_H, center_crop=False, ul_corner=None, image=None):
+    def crop_region(self, trgt_W, trgt_H, center_crop=False, ul_corner=None, image=None, mask=None):
         K = self.K.clone()
         if ul_corner is not None:
             ul_col, ul_row = ul_corner
         elif center_crop:
-            ul_col = self.W // 2 - trgt_W // 2
-            ul_row = self.H // 2 - trgt_H // 2
+            ul_col_s = np.random.randint(0, 256)
+            ul_row_s = np.random.randint(0, 256)
+            ul_col = self.W // 2 - trgt_W // 2 - ul_col_s
+            ul_row = self.H // 2 - trgt_H // 2 - ul_row_s
         else:
             ul_col = np.random.randint(0, self.W - trgt_W)
             ul_row = np.random.randint(0, self.H - trgt_H)
@@ -341,9 +343,12 @@ class Camera(object):
         camera = Camera(trgt_W, trgt_H, K, self.W2C.clone())
 
         if image is not None:
-            assert image.shape[0] == self.H and image.shape[1] == self.W, "image size does not match specfied size"
+            assert image.shape[0] == self.H and image.shape[1] == self.W, "image size does not match specified size"
             image = image[ul_row : ul_row + trgt_H, ul_col : ul_col + trgt_W]
-        return camera, image
+        if mask is not None:
+            assert mask.shape[0] == self.H and mask.shape[1] == self.W, "mask size does not match specified size"
+            mask = mask[ul_row: ul_row + trgt_H, ul_col: ul_col + trgt_W]
+        return camera, image, mask
 
     def resize(self, factor, image=None):
         trgt_H, trgt_W = int(self.H * factor), int(self.W * factor)

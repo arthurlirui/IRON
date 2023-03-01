@@ -528,7 +528,7 @@ class ModelBed:
         dielectric_eta = results['dielectric_eta']
 
         if self.args.gamma_pred:
-            gt_color_im = gamma_correction(gt_color_im + 1e-6, 2.2)
+            #gt_color_im = gamma_correction(gt_color_im + 1e-6, 2.2)
             color_im = gamma_correction(color_im + 1e-6, 2.2)
             diffuse_color_im = gamma_correction(diffuse_color_im + 1e-6, 2.2)
             specular_color_im = gamma_correction(specular_color_im + 1e-6, 2.2)
@@ -708,6 +708,237 @@ class ModelBed:
                 self.color_network_dict[nn].requires_grad_(requires_grad=True)
             else:
                 self.color_network_dict[nn].requires_grad_(requires_grad=False)
+
+    def calc_eik_loss(self, h=1, w=1):
+        eik_points = torch.empty(h * w // 2, 3).cuda().float().uniform_(-1.0, 1.0)
+        eik_grad = self.sdf_network.gradient(eik_points).view(-1, 3)
+        eik_cnt = eik_grad.shape[0]
+        eik_loss = ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
+        return eik_loss, eik_cnt
+
+    def calc_photometric_loss(self, pred_img, gt_img, mask_img, use_l2=True, use_ssim=True):
+        img_loss = torch.Tensor([0.0]).cuda()
+        img_l2_loss = torch.Tensor([0.0]).cuda()
+        img_ssim_loss = torch.Tensor([0.0]).cuda()
+        if use_l2:
+            img_l2_loss = self.pyramidl2_loss_fn(pred_img, gt_img)
+        if use_ssim:
+            img_ssim_loss = self.ssim_loss_fn(pred_img, gt_img, mask_img.unsqueeze(0).unsqueeze(0))
+        img_loss = img_l2_loss + img_ssim_loss * self.args.ssim_weight
+        return img_loss, img_l2_loss, img_ssim_loss
+
+    def calc_roughness_loss(self, roughness):
+        #roughness = results["specular_roughness"][mask]
+        roughrange_loss = torch.Tensor([0.0]).cuda()
+        roughness_value = 0.5
+        roughness = roughness[roughness > roughness_value]
+        if roughness.numel() > 0:
+            roughrange_loss = (roughness - roughness_value).mean() * self.args.roughrange_weight
+        return roughrange_loss
+
+    def train_comp2(self, network_list=['diffuse_albedo_network'], opt_sdf=True, num_iter=10000):
+        fill_holes = self.fill_holes
+        handle_edges = not self.args.no_edgesample
+        is_training = True
+        if opt_sdf:
+            self.sdf_network.requires_grad_(requires_grad=True)
+        else:
+            self.sdf_network.requires_grad_(requires_grad=False)
+        self.component_switch(network_list=network_list)
+
+        if self.args.inv_gamma_gt:
+            ic("linearizing ground-truth images using inverse gamma correction")
+            self.gt_images = inv_gamma_correction(self.gt_images, gamma=2.2)
+
+        ic(fill_holes, handle_edges, is_training, self.args.inv_gamma_gt)
+
+        global_step = self.args.num_iters
+        start_step = self.start_step
+        # start_step = 0
+        # num_iter = self.num_iters
+        num_gt_images = self.gt_images.shape[0]
+
+        for global_step in tqdm.tqdm(range(start_step, num_iter)):
+            self.sdf_optimizer.zero_grad()
+            for x in self.color_optimizer_dict.keys():
+                self.color_optimizer_dict[x].zero_grad()
+
+            idx = np.random.randint(0, num_gt_images)
+            camera_crop, gt_color_crop, mask_crop = self.cameras[idx].crop_region(trgt_W=self.args.patch_size,
+                                                                                  trgt_H=self.args.patch_size,
+                                                                                  image=self.gt_images[idx],
+                                                                                  mask=self.mask_images[idx],
+                                                                                  center_crop=True)
+
+            #camera_crop_mask, mask_crop = self.cameras[idx].crop_region(trgt_W=self.args.patch_size,
+            #                                                            trgt_H=self.args.patch_size,
+            #                                                            image=self.mask_images[idx])
+
+            results = render_camera(camera_crop,
+                                    self.sdf_network,
+                                    self.raytracer,
+                                    self.color_network_dict,
+                                    render_fn=self.render_fn,
+                                    fill_holes=self.fill_holes,
+                                    handle_edges=self.handle_edges,
+                                    is_training=is_training)
+            if self.args.gamma_pred:
+                try:
+                    results["color"] = gamma_correction(results["color"])
+                    results["diffuse_color"] = gamma_correction(results["diffuse_color"])
+                    results["specular_color"] = gamma_correction(results["specular_color"])
+                except:
+                    print(results.keys())
+
+            # results["color"] = results["diffuse_color"]
+
+            mask = results["convergent_mask"]
+            costheta_mask = (results["costheta"]) > 0.9
+            if handle_edges:
+                mask = mask | results["edge_mask"]
+
+            img_loss = torch.Tensor([0.0]).cuda()
+            img_l2_loss = torch.Tensor([0.0]).cuda()
+            img_ssim_loss = torch.Tensor([0.0]).cuda()
+
+            albedo_loss = torch.Tensor([0.0]).cuda()
+            roughrange_loss = torch.Tensor([0.0]).cuda()
+            metallicness_loss = torch.Tensor([0.0]).cuda()
+            dielectricness_loss = torch.Tensor([0.0]).cuda()
+            mask_loss = torch.Tensor([0.0]).cuda()
+
+            #eik_points = torch.empty(camera_crop.H * camera_crop.W // 2, 3).cuda().float().uniform_(-1.0, 1.0)
+            #eik_grad = self.sdf_network.gradient(eik_points).view(-1, 3)
+            #eik_cnt = eik_grad.shape[0]
+            #eik_loss = ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
+
+            eik_loss, eik_cnt = self.calc_eik_loss(camera_crop.H, camera_crop.W)
+
+            print(torch.sum(mask.float()))
+            if mask.any():
+                pred_img = results["color"].permute(2, 0, 1).unsqueeze(0)
+                gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device, dtype=pred_img.dtype)
+
+                mask_img = mask_crop.to(mask.device, dtype=mask.dtype)
+                pred_diff_img = results["diffuse_color"].permute(2, 0, 1).unsqueeze(0)
+                pred_spec_img = results["specular_color"].permute(2, 0, 1).unsqueeze(0)
+                pred_diff_albedo = results["diffuse_albedo"].permute(2, 0, 1).unsqueeze(0)
+                pred_spec_albedo = results["specular_albedo"].permute(2, 0, 1).unsqueeze(0)
+
+                # print(pred_img.shape, gt_img.shape)
+                pred_img = pred_img[:, :3, :, :]
+                gt_img = gt_img[:, :3, :, :]
+
+                # pred_diff_img = pred_diff_img[:, :3, :, :]
+                # pred_spec_img = pred_spec_img[:, :3, :, :]
+                # gt_img = gt_img[:, :3, :, :]
+
+                # calculate image loss
+                # pred_diff_img[..., costheta_mask] = 0
+                # gt_diff_img = gt_img.clone()
+                # gt_diff_img[..., costheta_mask] = 0
+
+                # img_l2_loss = self.pyramidl2_loss_fn(pred_diff_img, gt_diff_img)
+                # img_l2_loss += self.pyramidl2_loss_fn(pred_img, gt_img)
+                # 1. end2end image loss
+                #img_l2_loss = self.pyramidl2_loss_fn(pred_img, gt_img)
+                #img_ssim_loss = self.ssim_loss_fn(pred_img, gt_img, mask.unsqueeze(0).unsqueeze(0))
+                #img_loss = img_l2_loss + img_ssim_loss * self.args.ssim_weight
+
+                img_loss, img_l2_loss, img_ssim_loss = self.calc_photometric_loss(pred_img, gt_img, mask)
+
+                # 2. loss for albedo, L1 smooth
+                if False:
+                    grad_diff = kornia.filters.laplacian(pred_diff_albedo, 3)
+                    albedo_loss = torch.sum(kornia.losses.total_variation(grad_diff, reduction='sum'))
+                    grad_spec = kornia.filters.laplacian(pred_spec_albedo, 3)
+                    albedo_loss += torch.sum(kornia.losses.total_variation(grad_spec, reduction='sum'))
+                    albedo_loss *= 0.01
+
+                # calculate eik loss
+                eik_grad = results["normal"][mask]
+                eik_cnt += eik_grad.shape[0]
+                eik_loss = eik_loss + ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
+
+                if "edge_pos_neg_normal" in results:
+                    eik_grad = results["edge_pos_neg_normal"]
+                    eik_cnt += eik_grad.shape[0]
+                    eik_loss = eik_loss + ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
+
+                # calculate roughness range loss
+                # roughness = results["specular_roughness"][mask]
+                # roughness_value = 0.5
+                # roughness = roughness[roughness > roughness_value]
+                # if roughness.numel() > 0:
+                #     roughrange_loss = (roughness - roughness_value).mean() * self.args.roughrange_weight
+                roughrange_loss = self.calc_roughness_loss(results["specular_roughness"][mask])
+
+                # mask_loss = torch.nn.MSELoss(reduction='mean')(torch.tensor(mask, dtype=torch.float), mask_img[:, :, 0])
+
+                # calculate metallic eta k loss
+                if False:
+                    if 'metallic_eta' in results:
+                        metal_eta = results["metallic_eta"][mask]
+                        metal_k = results["metallic_k"][mask]
+                        # metal_eta_value, metal_k_value = 0.198125, 5.631250
+                        metal_eta_value, metal_k_value = 1.0, 10.0
+                        metal_eta = metal_eta[metal_eta > metal_eta_value]
+                        metal_k = metal_k[metal_k > metal_k_value]
+                        metallicness_loss = (torch.abs(
+                            metal_eta - metal_eta_value)).mean() * self.args.metal_eta_weight
+                        metallicness_loss += (torch.abs(metal_k - metal_k_value)).mean() * self.args.metal_k_weight
+
+                    if 'dielectric_eta' in results:
+                        dielectric_eta = results['dielectric_eta'][mask]
+                        dielectricness_loss = (torch.abs(
+                            dielectric_eta - 1.5)).mean() * self.args.dielectric_eta_weight
+
+            # maskloss
+
+            # mask_loss = 1.0 - (torch.sum(mask & mask_img[:, :, 0], dtype=torch.float) / torch.sum(mask | mask_img[:, :, 0], dtype=torch.float))
+            eik_loss = eik_loss / eik_cnt * self.args.eik_weight
+            # loss = img_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
+            loss = img_loss + eik_loss + roughrange_loss
+            loss.backward()
+
+            self.sdf_optimizer.step()
+            for x in self.color_optimizer_dict.keys():
+                self.color_optimizer_dict[x].step()
+
+            if global_step % 500 == 0:
+                loss_dict = {'loss': loss, 'img_loss': img_loss, 'img_l2_loss': img_l2_loss,
+                             'img_ssim_loss': img_ssim_loss, 'mask_loss': mask_loss,
+                             'eik_loss': eik_loss, 'roughrange_loss': roughrange_loss,
+                             'metallicness_loss': metallicness_loss, 'dielectricness_loss': dielectricness_loss}
+                self.write_loss_all(loss_dict=loss_dict, global_step=global_step)
+
+            if global_step % 1000 == 0:
+                self.save_checkpoint(global_step=global_step)
+
+            if global_step % 100 == 0:
+                ic(
+                    self.args.out_dir,
+                    global_step,
+                    loss.item(),
+                    img_loss.item(),
+                    img_l2_loss.item(),
+                    img_ssim_loss.item(),
+                    mask_loss.item(),
+                    albedo_loss.item(),
+                    eik_loss.item(),
+                    roughrange_loss.item(),
+                    metallicness_loss.item(),
+                    dielectricness_loss.item(),
+                    self.color_network_dict["point_light_network"].get_light().item(),
+                )
+
+                for x in list(results.keys()):
+                    del results[x]
+                if False:
+                    for idx in range(len(self.cameras)):
+                        self.validate_image(resize_ratio=0.5, global_step=global_step, idx=idx)
+                else:
+                    self.validate_image(resize_ratio=0.2, global_step=global_step, idx=13)
 
     def train_comp(self, network_list=['diffuse_albedo_network'], opt_sdf=True, num_iter=10000):
         fill_holes = self.fill_holes
@@ -989,7 +1220,7 @@ def main():
                         #'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
                         #'point_light_network']
 
-        testbed.train_comp(network_list=network_list, opt_sdf=True, num_iter=100000)
+        testbed.train_comp2(network_list=network_list, opt_sdf=True, num_iter=100000)
 
     if args.render_all:
         testbed.render_all()

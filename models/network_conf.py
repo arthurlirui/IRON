@@ -219,8 +219,8 @@ def init_rendering_network_dict(renderer_name='comp'):
                 multires_view=-1,
                 mode="no_view_dir",
                 squeeze_out=False,
-                output_bias=0.4,
-                output_scale=0.1,
+                output_bias=0.0,
+                output_scale=1.0,
             ).cuda(),
             "specular_roughness_network": RenderingNetwork(
                 d_in=6,
@@ -233,7 +233,7 @@ def init_rendering_network_dict(renderer_name='comp'):
                 mode="no_view_dir",
                 squeeze_out=False,
                 output_bias=0.1,
-                output_scale=0.1,
+                output_scale=1.0,
             ).cuda(),
             "point_light_network": PointLightNetwork().cuda(),
             "metallic_network": RenderingNetwork(
@@ -247,7 +247,7 @@ def init_rendering_network_dict(renderer_name='comp'):
                 mode="no_view_dir",
                 squeeze_out=False,
                 output_bias=0.1,
-                output_scale=0.1,
+                output_scale=1.0,
             ).cuda(),
             "dielectric_network": RenderingNetwork(
                 d_in=6,
@@ -260,7 +260,7 @@ def init_rendering_network_dict(renderer_name='comp'):
                 mode="no_view_dir",
                 squeeze_out=False,
                 output_bias=0.1,
-                output_scale=0.1,
+                output_scale=1.0,
             ).cuda(),
             "metallic_eta_network": RenderingNetwork(
                 d_in=6,
@@ -273,7 +273,7 @@ def init_rendering_network_dict(renderer_name='comp'):
                 mode="no_view_dir",
                 squeeze_out=False,
                 output_bias=0.1,
-                output_scale=0.1,
+                output_scale=1.0,
             ).cuda(),
             "metallic_k_network": RenderingNetwork(
                 d_in=6,
@@ -286,7 +286,7 @@ def init_rendering_network_dict(renderer_name='comp'):
                 mode="no_view_dir",
                 squeeze_out=False,
                 output_bias=0.1,
-                output_scale=0.1,
+                output_scale=1.0,
             ).cuda(),
             "dielectric_eta_network": RenderingNetwork(
                 d_in=6,
@@ -299,7 +299,7 @@ def init_rendering_network_dict(renderer_name='comp'):
                 mode="no_view_dir",
                 squeeze_out=False,
                 output_bias=0.1,
-                output_scale=0.1,
+                output_scale=1.0,
             ).cuda()
         }
 
