@@ -778,7 +778,151 @@ class CompositeRenderer(nn.Module):
         G = smithG1(cos_theta_i, alpha_u) * smithG1(cos_theta_i, alpha_v)  # [..., 1]
         return G
 
+    def forward2(self, light, distance, normal, viewdir, params={}):
+        """
+        light:
+        distance: [..., 1]
+        normal, viewdir: [..., 3]; both normal and viewdir point away from objects
+        diffuse_albedo, specular_albedo: [..., 3]
+        alpha: [..., 1]; roughness
+        params.keys() = ['anisotropic', 'roughness', 'metallic']
+        """
+        specular_roughness = torch.clamp(params['specular_roughness'], min=0.00001)
+        dielectric_eta = torch.clamp(params['dielectric_eta'], min=1.000001, max=1.999999)
+        metallic_eta = torch.clamp(params['metallic_eta'], min=0.099999, max=4.999999)
+        metallic_k = torch.clamp(params['metallic_k'], min=0.099999, max=9.999999)
+        specular_albedo = torch.clamp(params['specular_albedo'], min=0.00001)
+        diffuse_albedo = torch.clamp(params['diffuse_albedo'], min=0.00001)
+        metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
+        dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
+        eta = 1.48958738
+        cos_theta_i = torch.sum(viewdir * normal, dim=-1, keepdims=True)
+        cos_theta_i = torch.clamp(cos_theta_i, min=0.00001, max=0.99999)
+        cos_theta_o = cos_theta_i  # co-located setting
+        inveta = 1.0 / eta
+        alpha_u, alpha_v = specular_roughness, specular_roughness
+        D = self.calc_D_specular(cos_theta_i, eta)
+        G = self.calc_G_specular(cos_theta_i, alpha_u, alpha_v)
+
+        F_metalic = self.metallic_reflection(cos_theta_i, metallic_eta, metallic_k)
+        F_dielectric = self.dielectric_reflection(cos_theta_i, dielectric_eta)
+
+        # decay light according to squared-distance falloff
+        light_intensity = light / (distance * distance + 1e-10)
+
+        if False:
+            eta_cu = 0.28
+            k_cu = 5.4856
+            eta = 1.5
+            main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, metallic_eta, metallic_k,
+                                                              specular_albedo)
+            # main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, eta_cu, k_cu, specular_albedo)
+            main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, dielectric_eta,
+                                                                  specular_albedo)
+            # main_metallic_rgb *= light_intensity
+            # main_dielectric_rgb *= light_intensity
+            # main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
+            # F_dielectric = 0.03867
+            main_specular_rgb = main_dielectric_rgb + main_metallic_rgb
+            # main_specular_rgb = light_intensity * specular_albedo * F_dielectric * D * G / (4.0 * torch.abs(cos_theta_i))
+            # main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
+            # main_specular_rgb = main_dielectric_rgb
+            # main_specular_rgb = main_metallic_rgb
+        main_specular_rgb = torch.zeros_like(specular_albedo)
+        main_dielectric_rgb = torch.zeros_like(specular_albedo)
+        main_metallic_rgb = torch.zeros_like(specular_albedo)
+        diffuse_rgb = self.diffuse_reflection_ggx(light_intensity=light_intensity,
+                                                  cos_theta=cos_theta_i,
+                                                  alpha=specular_roughness,
+                                                  diffuse_albedo=diffuse_albedo)
+
+        rgb = diffuse_rgb
+        # rgb += specular_rgb
+        # main_metallic_rgb = light_intensity * main_metallic_rgb
+        # main_dielectric_rgb = light_intensity * main_dielectric_rgb
+        # rgb += main_metallic_rgb
+        rgb += main_specular_rgb
+
+        ret = {"diffuse_rgb": diffuse_rgb,
+               "specular_rgb": main_specular_rgb,
+               "metallic_rgb": main_metallic_rgb,
+               "dielectric_rgb": main_dielectric_rgb,
+               "rgb": rgb}
+        return ret
+
     def forward(self, light, distance, normal, viewdir, params={}, switch_dict={}):
+        """
+        light:
+        distance: [..., 1]
+        normal, viewdir: [..., 3]; both normal and viewdir point away from objects
+        diffuse_albedo, specular_albedo: [..., 3]
+        alpha: [..., 1]; roughness
+        """
+        diffuse_albedo = params['diffuse_albedo']
+        specular_albedo = params['specular_albedo']
+        alpha = params['specular_roughness']
+        # decay light according to squared-distance falloff
+        light_intensity = light / (distance * distance + 1e-10)
+
+        # <wo, n> = <w_i, n> = <h, n> in colocated setting
+        dot = torch.sum(viewdir * normal, dim=-1, keepdims=True)
+        dot = torch.clamp(dot, min=0.00001, max=0.99999)  # must be very precise; cannot be 0.999
+        # default value of IOR['polypropylene'] / IOR['air'].
+        m_eta = 1.48958738
+        m_invEta2 = 1.0 / (m_eta * m_eta)
+
+        # clamp alpha for numeric stability
+        alpha = torch.clamp(alpha, min=0.0001)
+
+        # specular term: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/roughplastic.cpp#L347
+        ## compute GGX NDF: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/microfacet.h#L191
+        cosTheta2 = dot * dot
+        root = cosTheta2 + (1.0 - cosTheta2) / (alpha * alpha + 1e-10)
+        D = 1.0 / (np.pi * alpha * alpha * root * root + 1e-10)
+        ## compute fresnel: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/libcore/util.cpp#L651
+        # F = 0.04
+        F = 0.03867
+
+        ## compute shadowing term: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/microfacet.h#L520
+        G = smithG1(dot, alpha) ** 2  # [..., 1]
+
+        specular_rgb = light_intensity * specular_albedo * F * D * G / (4.0 * dot + 1e-10)
+
+        # diffuse term: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/roughplastic.cpp#L367
+        ## compute T12: : https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/rtrans.h#L183
+        ### data_file: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/rtrans.h#L93
+        ### assume eta is fixed
+        warpedCosTheta = dot ** 0.25
+        alphaMin, alphaMax = 0, 4
+        warpedAlpha = ((alpha - alphaMin) / (alphaMax - alphaMin)) ** 0.25  # [..., 1]
+        tx = torch.floor(warpedCosTheta * self.num_theta_samples).long()
+        ty = torch.floor(warpedAlpha * self.num_alpha_samples).long()
+        t_idx = ty * self.num_theta_samples + tx
+
+        dots_sh = list(t_idx.shape[:-1])
+        data = self.MTS_TRANS.view([1] * len(dots_sh) + [-1]).expand(dots_sh + [-1])
+
+        t_idx = torch.clamp(t_idx, min=0, max=data.shape[-1] - 1).long()  # important
+        T12 = torch.clamp(torch.gather(input=data, index=t_idx, dim=-1), min=0.0, max=1.0)
+        T21 = T12  # colocated setting
+
+        ## compute Fdr: https://github.com/mitsuba-renderer/mitsuba/blob/cfeb7766e7a1513492451f35dc65b86409655a7b/src/bsdfs/rtrans.h#L249
+        t_idx = torch.floor(warpedAlpha * self.num_alpha_samples).long()
+        data = self.MTS_DIFF_TRANS.view([1] * len(dots_sh) + [-1]).expand(dots_sh + [-1])
+        t_idx = torch.clamp(t_idx, min=0, max=data.shape[-1] - 1).long()  # important
+        Fdr = torch.clamp(1.0 - torch.gather(input=data, index=t_idx, dim=-1), min=0.0, max=1.0)  # [..., 1]
+
+        diffuse_rgb = light_intensity * (diffuse_albedo / (1.0 - Fdr + 1e-10) / np.pi) * dot * T12 * T21 * m_invEta2
+
+        #ret = {"diffuse_rgb": diffuse_rgb, "specular_rgb": specular_rgb, "rgb": diffuse_rgb + specular_rgb}
+        ret = {"diffuse_rgb": diffuse_rgb,
+               "specular_rgb": specular_rgb,
+               "metallic_rgb": specular_rgb,
+               "dielectric_rgb": specular_rgb,
+               "rgb": diffuse_rgb+specular_rgb}
+        return ret
+
+    def forward1(self, light, distance, normal, viewdir, params={}, switch_dict={}):
         """
         light:
         distance: [..., 1]
@@ -857,8 +1001,9 @@ class CompositeRenderer(nn.Module):
             #main_metallic_rgb *= light_intensity
             #main_dielectric_rgb *= light_intensity
             #main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
-            F_dielectric = 0.03867
-            main_specular_rgb = light_intensity * specular_albedo * F_dielectric * D * G / (4.0 * torch.abs(cos_theta_i))
+            #F_dielectric = 0.03867
+            main_specular_rgb = main_dielectric_rgb + main_metallic_rgb
+            #main_specular_rgb = light_intensity * specular_albedo * F_dielectric * D * G / (4.0 * torch.abs(cos_theta_i))
             #main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
             #main_specular_rgb = main_dielectric_rgb
             #main_specular_rgb = main_metallic_rgb

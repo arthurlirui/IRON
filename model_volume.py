@@ -991,7 +991,7 @@ class Runner:
         img_fine = (np.concatenate(out_rgb_fine, axis=0).reshape([H, W, 3]) * 256).clip(0, 255).astype(np.uint8)
         return img_fine
 
-    def validate_mesh(self, world_space=False, resolution=64, threshold=0.0):
+    def validate_mesh(self, world_space=False, resolution=512, threshold=0.0):
         bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
         bound_max = torch.tensor(self.dataset.object_bbox_max, dtype=torch.float32)
 
@@ -1102,7 +1102,7 @@ if __name__ == "__main__":
         for idx in range(runner.dataset.n_RGB):
             #if idx != 22:
             #    pass
-            runner.validate_image_rendering(idx=idx, resolution_level=1)
+            runner.validate_image_rendering(idx=idx, resolution_level=2)
     elif args.mode == "validate_mesh":
         #runner.train_NIRRGB(data_type='rgb')
         runner.validate_mesh(world_space=True, resolution=1024, threshold=args.mcube_threshold)

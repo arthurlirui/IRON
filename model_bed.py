@@ -30,15 +30,15 @@ class ModelBed:
         #self.renderer_name = 'comp2'
         self.renderer_name = args.renderer_name
         self.device = 'cuda:0'
-        sdf_threshold = 1.0e-7
+        sdf_threshold = 5.0e-5
         sphere_tracing_iters = 16
         n_steps = 128
-        max_num_pts = 400000
+        max_num_pts = 200000
         self.raytracer = RayTracer(sdf_threshold, sphere_tracing_iters, n_steps, max_num_pts)
         #self.set_render_fn(render_fn=render_fn)
         sdf_network = init_sdf_network_dict()
         color_network_dict = init_rendering_network_dict(renderer_name=self.renderer_name)
-        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-6)
+        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
         color_optimizer_dict = choose_optmizer(renderer_name=self.renderer_name, network_dict=color_network_dict)
         #renderer = choose_renderer(renderer_name=self.renderer_name)
         log_dir = os.path.join(self.args.out_dir, "logs")
@@ -77,7 +77,7 @@ class ModelBed:
                              color_network_dict=self.color_network_dict,
                              load_diffuse_albedo=args.init_neus_color)
         # init init lighting
-        dist = np.median([torch.norm(self.cameras[i].get_camera_origin()).item() for i in range(len(self.cameras))])
+        dist = np.mean([torch.norm(self.cameras[i].get_camera_origin()).item() for i in range(len(self.cameras))])
         init_light = args.init_light_scale * dist * dist
         self.color_network_dict["point_light_network"].set_light(init_light)
 
@@ -127,24 +127,26 @@ class ModelBed:
             diffuse_albedo = self.color_network_dict["diffuse_albedo_network"](points, normals, -normals, features).abs()
             specular_albedo = self.color_network_dict["specular_albedo_network"](points, normals, -normals, features).abs()
 
-        metallic = self.color_network_dict["metallic_network"](points, normals, None, features).abs()
         specular_roughness = self.color_network_dict["specular_roughness_network"](points, normals, None, features).abs()
+
+        #if renderer_name == 'comp':
+        metallic = self.color_network_dict["metallic_network"](points, normals, None, features).abs()
         dielectric = self.color_network_dict["dielectric_network"](points, normals, None, features).abs()
         metallic_eta = self.color_network_dict["metallic_eta_network"](points, normals, None, features).abs()
         metallic_k = self.color_network_dict["metallic_k_network"](points, normals, None, features).abs()
         dielectric_eta = self.color_network_dict["dielectric_eta_network"](points, normals, None, features).abs()
-
-        res['diffuse_albedo'] = diffuse_albedo
-        res['specular_albedo'] = specular_albedo
         res['metallic'] = metallic
         res['dielectric'] = dielectric
-        res['specular_roughness'] = specular_roughness
         res['metallic_eta'] = metallic_eta
         res['metallic_k'] = metallic_k
         res['dielectric_eta'] = dielectric_eta
+
+        res['specular_roughness'] = specular_roughness
+        res['diffuse_albedo'] = diffuse_albedo
+        res['specular_albedo'] = specular_albedo
         return res
 
-    def render_fn(self, interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
+    def render_fn_comp2(self, interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
         dots_sh = list(interior_mask.shape)
         rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
 
@@ -156,19 +158,18 @@ class ModelBed:
 
         # rendering model parameters
         specular_roughness = rgb[..., 0:1].clone()
+        normals_pad = rgb.clone()
+        costheta = rgb[..., 0:1].clone()
+        metallic = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
+        dielectric = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
         metallic_eta = rgb[..., 0:1].clone()
         metallic_k = rgb[..., 0:1].clone()
         dielectric_eta = rgb[..., 0:1].clone()
 
-        metallic = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
-        dielectric = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
-        normals_pad = rgb.clone()
-        costheta = rgb[..., 0:1].clone()
-
         if interior_mask.any():
             normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
             ray_d_norm = ray_d / (ray_d.norm(dim=-1, keepdim=True) + 1e-10)
-            costheta_t = torch.sum(-1*ray_d_norm*normals, dim=-1, keepdim=True)
+            costheta_t = torch.sum(-1 * ray_d_norm * normals, dim=-1, keepdim=True)
             params = self.get_material_comp(points=points, normals=normals, features=features)
             results = self.renderer(
                 color_network_dict["point_light_network"](),
@@ -195,7 +196,8 @@ class ModelBed:
             normals_pad[interior_mask] = normals
             metallic[interior_mask] = params['metallic']
             dielectric[interior_mask] = params['dielectric']
-        return {
+
+        res = {
             "color": rgb,
             "diffuse_color": diffuse_rgb,
             "specular_color": specular_rgb,
@@ -212,6 +214,154 @@ class ModelBed:
             "dielectric": dielectric,
             "costheta": costheta,
         }
+        return res
+
+    def render_fn_comp(self, interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
+        dots_sh = list(interior_mask.shape)
+        rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
+
+        # specturm buffer
+        diffuse_rgb, specular_rgb = rgb.clone(), rgb.clone()
+        diffuse_albedo, specular_albedo = rgb.clone(), rgb.clone()
+        metallic_rgb = rgb.clone()
+        dielectric_rgb = rgb.clone()
+
+        # rendering model parameters
+        specular_roughness = rgb[..., 0:1].clone()
+        metallic_eta = rgb[..., 0:1].clone()
+        metallic_k = rgb[..., 0:1].clone()
+        dielectric_eta = rgb[..., 0:1].clone()
+
+        metallic = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
+        dielectric = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
+        normals_pad = rgb.clone()
+        costheta = rgb[..., 0:1].clone()
+
+        if interior_mask.any():
+            normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
+            ray_d_norm = ray_d / (ray_d.norm(dim=-1, keepdim=True) + 1e-10)
+            costheta_t = torch.sum(-1 * ray_d_norm * normals, dim=-1, keepdim=True)
+            params = self.get_material_comp(points=points, normals=normals, features=features)
+            results = self.renderer(
+                color_network_dict["point_light_network"](),
+                (points - ray_o).norm(dim=-1, keepdim=True),
+                normals,
+                -ray_d,
+                params=params)
+
+            rgb[interior_mask] = results["rgb"]
+            diffuse_rgb[interior_mask] = results["diffuse_rgb"]
+            specular_rgb[interior_mask] = results["specular_rgb"]
+            metallic_rgb[interior_mask] = results["metallic_rgb"]
+            dielectric_rgb[interior_mask] = results["dielectric_rgb"]
+
+            diffuse_albedo[interior_mask] = params['diffuse_albedo']
+            specular_albedo[interior_mask] = params['specular_albedo']
+
+            specular_roughness[interior_mask] = params['specular_roughness']
+            metallic_eta[interior_mask] = params['metallic_eta']
+            metallic_k[interior_mask] = params['metallic_k']
+            dielectric_eta[interior_mask] = params['dielectric_eta']
+
+            costheta[interior_mask] = costheta_t
+            normals_pad[interior_mask] = normals
+            metallic[interior_mask] = params['metallic']
+            dielectric[interior_mask] = params['dielectric']
+        res = {
+            "color": rgb,
+            "diffuse_color": diffuse_rgb,
+            "specular_color": specular_rgb,
+            "diffuse_albedo": diffuse_albedo,
+            "specular_albedo": specular_albedo,
+            "specular_roughness": specular_roughness,
+            "metallic_eta": metallic_eta,
+            "metallic_k": metallic_k,
+            "dielectric_eta": dielectric_eta,
+            "normal": normals_pad,
+            "metallic_rgb": metallic_rgb,
+            "metallic": metallic,
+            "dielectric_rgb": dielectric_rgb,
+            "dielectric": dielectric,
+            "costheta": costheta,
+        }
+        return res
+
+    def render_fn(self, interior_mask, color_network_dict, ray_o, ray_d, points, normals, features):
+        if self.renderer_name == 'comp2':
+            return self.render_fn_comp2(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features)
+        elif self.renderer_name == 'comp':
+            return self.render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features)
+        else:
+            return self.render_fn_comp(interior_mask, color_network_dict, ray_o, ray_d, points, normals, features)
+
+    # def render_fn(self, interior_mask, color_network_dict, ray_o, ray_d, points, normals, features, renderer_name='comp2'):
+    #     dots_sh = list(interior_mask.shape)
+    #     rgb = torch.zeros(dots_sh + [3], dtype=torch.float32, device=interior_mask.device)
+    #
+    #     # specturm buffer
+    #     diffuse_rgb, specular_rgb = rgb.clone(), rgb.clone()
+    #     diffuse_albedo, specular_albedo = rgb.clone(), rgb.clone()
+    #     metallic_rgb = rgb.clone()
+    #     dielectric_rgb = rgb.clone()
+    #
+    #     # rendering model parameters
+    #     specular_roughness = rgb[..., 0:1].clone()
+    #     metallic_eta = rgb[..., 0:1].clone()
+    #     metallic_k = rgb[..., 0:1].clone()
+    #     dielectric_eta = rgb[..., 0:1].clone()
+    #
+    #     metallic = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
+    #     dielectric = torch.zeros(dots_sh + [1], dtype=torch.float32, device=interior_mask.device)
+    #     normals_pad = rgb.clone()
+    #     costheta = rgb[..., 0:1].clone()
+    #
+    #     if interior_mask.any():
+    #         normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-10)
+    #         ray_d_norm = ray_d / (ray_d.norm(dim=-1, keepdim=True) + 1e-10)
+    #         costheta_t = torch.sum(-1*ray_d_norm*normals, dim=-1, keepdim=True)
+    #         params = self.get_material_comp(points=points, normals=normals, features=features)
+    #         results = self.renderer(
+    #             color_network_dict["point_light_network"](),
+    #             (points - ray_o).norm(dim=-1, keepdim=True),
+    #             normals,
+    #             -ray_d,
+    #             params=params)
+    #
+    #         rgb[interior_mask] = results["rgb"]
+    #         diffuse_rgb[interior_mask] = results["diffuse_rgb"]
+    #         specular_rgb[interior_mask] = results["specular_rgb"]
+    #         metallic_rgb[interior_mask] = results["metallic_rgb"]
+    #         dielectric_rgb[interior_mask] = results["dielectric_rgb"]
+    #
+    #         diffuse_albedo[interior_mask] = params['diffuse_albedo']
+    #         specular_albedo[interior_mask] = params['specular_albedo']
+    #
+    #         specular_roughness[interior_mask] = params['specular_roughness']
+    #         metallic_eta[interior_mask] = params['metallic_eta']
+    #         metallic_k[interior_mask] = params['metallic_k']
+    #         dielectric_eta[interior_mask] = params['dielectric_eta']
+    #
+    #         costheta[interior_mask] = costheta_t
+    #         normals_pad[interior_mask] = normals
+    #         metallic[interior_mask] = params['metallic']
+    #         dielectric[interior_mask] = params['dielectric']
+    #     return {
+    #         "color": rgb,
+    #         "diffuse_color": diffuse_rgb,
+    #         "specular_color": specular_rgb,
+    #         "diffuse_albedo": diffuse_albedo,
+    #         "specular_albedo": specular_albedo,
+    #         "specular_roughness": specular_roughness,
+    #         "metallic_eta": metallic_eta,
+    #         "metallic_k": metallic_k,
+    #         "dielectric_eta": dielectric_eta,
+    #         "normal": normals_pad,
+    #         "metallic_rgb": metallic_rgb,
+    #         "metallic": metallic,
+    #         "dielectric_rgb": dielectric_rgb,
+    #         "dielectric": dielectric,
+    #         "costheta": costheta,
+    #     }
 
     def set_raytracer(self, raytracer=None):
         self.raytracer = raytracer
@@ -714,7 +864,8 @@ class ModelBed:
 
             # mask_loss = 1.0 - (torch.sum(mask & mask_img[:, :, 0], dtype=torch.float) / torch.sum(mask | mask_img[:, :, 0], dtype=torch.float))
             eik_loss = eik_loss / eik_cnt * self.args.eik_weight
-            loss = img_loss + 100 * mask_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
+            #loss = img_loss + eik_loss + roughrange_loss + metallicness_loss + dielectricness_loss
+            loss = img_loss + eik_loss + roughrange_loss
             loss.backward()
 
             self.sdf_optimizer.step()
@@ -754,7 +905,7 @@ class ModelBed:
                     for idx in range(len(self.cameras)):
                         self.validate_image(resize_ratio=0.5, global_step=global_step, idx=idx)
                 else:
-                    self.validate_image(resize_ratio=0.25, global_step=global_step, idx=12)
+                    self.validate_image(resize_ratio=0.2, global_step=global_step, idx=13)
 
 
 def config_parser():
@@ -786,7 +937,7 @@ def config_parser():
         action="store_true",
         help="whether the object of interest is made of metals or the scene contains metals",
     )
-    parser.add_argument("--init_light_scale", type=float, default=8.0, help="scaling parameters for light")
+    parser.add_argument("--init_light_scale", type=float, default=20.0, help="scaling parameters for light")
     parser.add_argument(
         "--export_all",
         action="store_true",
@@ -834,9 +985,9 @@ def main():
         network_list = ['color_network',
                         'diffuse_albedo_network',
                         'specular_albedo_network',
-                        'specular_roughness_network',
+                        'specular_roughness_network', 'point_light_network']
                         #'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
-                        'point_light_network']
+                        #'point_light_network']
 
         testbed.train_comp(network_list=network_list, opt_sdf=True, num_iter=100000)
 
