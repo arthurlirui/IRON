@@ -538,8 +538,9 @@ class ModelBed:
             #maxv, minv = np.max(metallic_rgb[:]), np.min(metallic_rgb[:])
             dielectric_rgb = gamma_correction(dielectric_rgb + 1e-6, 2.2)
 
-            #depth = gamma_correction(depth + 1e-6, 1.0 / 2.2)
-            #depth = (depth - np.min(depth[:])) / (np.max(depth[:]) - np.min(depth[:]))
+            #depth = gamma_correction(depth + 1e-6, 2.2)
+            depth = np.log(depth + 1e-6)
+            depth = (depth - np.min(depth[:])) / (np.max(depth[:]) - np.min(depth[:]))
 
             metal_eta = gamma_correction(metal_eta + 1e-6, 2.2)
             metal_eta = (metal_eta - np.min(metal_eta[:])) / (np.max(metal_eta[:]) - np.min(metal_eta[:]))
@@ -554,7 +555,7 @@ class ModelBed:
         img_list = [gt_color_im, color_im, normal_im, edge_mask_im,
                     diffuse_color_im, specular_color_im, diffuse_albedo_im, specular_albedo_im,
                     depth, metallic_rgb, dielectric_rgb, specular_roughness_im,
-                    costheta, costheta_mask, mask]
+                    costheta, costheta_mask, mask, metal_k, metal_eta, dielectric_eta]
                     #metal_eta, dielectric_eta, costheta]
         im = concatenate_result(image_list=img_list, imarray_length=4)
         file_name = f"logim_{global_step}_{os.path.basename(self.image_fpaths[idx])}"
@@ -770,10 +771,6 @@ class ModelBed:
                                                                                   mask=self.mask_images[idx],
                                                                                   center_crop=True)
 
-            #camera_crop_mask, mask_crop = self.cameras[idx].crop_region(trgt_W=self.args.patch_size,
-            #                                                            trgt_H=self.args.patch_size,
-            #                                                            image=self.mask_images[idx])
-
             results = render_camera(camera_crop,
                                     self.sdf_network,
                                     self.raytracer,
@@ -807,14 +804,9 @@ class ModelBed:
             dielectricness_loss = torch.Tensor([0.0]).cuda()
             mask_loss = torch.Tensor([0.0]).cuda()
 
-            #eik_points = torch.empty(camera_crop.H * camera_crop.W // 2, 3).cuda().float().uniform_(-1.0, 1.0)
-            #eik_grad = self.sdf_network.gradient(eik_points).view(-1, 3)
-            #eik_cnt = eik_grad.shape[0]
-            #eik_loss = ((eik_grad.norm(dim=-1) - 1) ** 2).sum()
-
             eik_loss, eik_cnt = self.calc_eik_loss(camera_crop.H, camera_crop.W)
 
-            print(torch.sum(mask.float()))
+            #print(torch.sum(mask.float()))
             if mask.any():
                 pred_img = results["color"].permute(2, 0, 1).unsqueeze(0)
                 gt_img = gt_color_crop.permute(2, 0, 1).unsqueeze(0).to(pred_img.device, dtype=pred_img.dtype)
@@ -1186,6 +1178,11 @@ def config_parser():
         help="whether to render the input image set RGB",
     )
     parser.add_argument(
+        "--train_refrac_index",
+        action="store_true",
+        help="whether to render the input image set RGB",
+    )
+    parser.add_argument(
         "--train_nir",
         action="store_true",
         help="whether to render the input image set NIR",
@@ -1221,6 +1218,12 @@ def main():
                         #'point_light_network']
 
         testbed.train_comp2(network_list=network_list, opt_sdf=True, num_iter=100000)
+    if args.train_refrac_index:
+        network_list = ['metallic_network', 'dielectric_network',
+                        'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
+        # 'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
+        # 'point_light_network']
+        testbed.train_comp2(network_list=network_list, opt_sdf=False, num_iter=30000)
 
     if args.render_all:
         testbed.render_all()

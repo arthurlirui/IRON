@@ -778,7 +778,7 @@ class CompositeRenderer(nn.Module):
         G = smithG1(cos_theta_i, alpha_u) * smithG1(cos_theta_i, alpha_v)  # [..., 1]
         return G
 
-    def forward2(self, light, distance, normal, viewdir, params={}):
+    def forward(self, light, distance, normal, viewdir, params={}):
         """
         light:
         distance: [..., 1]
@@ -810,7 +810,7 @@ class CompositeRenderer(nn.Module):
         # decay light according to squared-distance falloff
         light_intensity = light / (distance * distance + 1e-10)
 
-        if False:
+        if True:
             eta_cu = 0.28
             k_cu = 5.4856
             eta = 1.5
@@ -828,9 +828,9 @@ class CompositeRenderer(nn.Module):
             # main_specular_rgb = main_metallic_rgb + main_dielectric_rgb
             # main_specular_rgb = main_dielectric_rgb
             # main_specular_rgb = main_metallic_rgb
-        main_specular_rgb = torch.zeros_like(specular_albedo)
-        main_dielectric_rgb = torch.zeros_like(specular_albedo)
-        main_metallic_rgb = torch.zeros_like(specular_albedo)
+        #main_specular_rgb = torch.zeros_like(specular_albedo)
+        #main_dielectric_rgb = torch.zeros_like(specular_albedo)
+        #main_metallic_rgb = torch.zeros_like(specular_albedo)
         diffuse_rgb = self.diffuse_reflection_ggx(light_intensity=light_intensity,
                                                   cos_theta=cos_theta_i,
                                                   alpha=specular_roughness,
@@ -850,7 +850,7 @@ class CompositeRenderer(nn.Module):
                "rgb": rgb}
         return ret
 
-    def forward(self, light, distance, normal, viewdir, params={}, switch_dict={}):
+    def forward_ggx(self, light, distance, normal, viewdir, params={}, switch_dict={}):
         """
         light:
         distance: [..., 1]
