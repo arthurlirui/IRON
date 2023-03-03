@@ -79,7 +79,10 @@ def image_writer(writer_name='imageio'):
         return writer_imageio
     if writer_name == 'opencv':
         def writer_opencv(outpath, img):
-            return cv2.imwrite(outpath, img[:, :, ::-1])
+            try:
+                return cv2.imwrite(outpath, img[:, :, ::-1])
+            except:
+                return cv2.imwrite(outpath, img)
         return writer_opencv
 
 

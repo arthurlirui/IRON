@@ -1,8 +1,14 @@
 import os
-
 import numpy
 import numpy as np
 import torch
+
+
+def norm_min_max(v):
+    try:
+        return (v - np.min(v[:])) / (np.max(v[:]) - np.min(v[:]))
+    except:
+        return (v - torch.min(v[:])) / (torch.max(v[:]) - torch.min(v[:]))
 
 
 def gamma_correction(image, gamma=2.2):

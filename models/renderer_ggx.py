@@ -778,7 +778,7 @@ class CompositeRenderer(nn.Module):
         G = smithG1(cos_theta_i, alpha_u) * smithG1(cos_theta_i, alpha_v)  # [..., 1]
         return G
 
-    def forward(self, light, distance, normal, viewdir, params={}):
+    def forward(self, light, distance, normal, viewdir, params={}, use_env_light=False):
         """
         light:
         distance: [..., 1]
@@ -795,6 +795,8 @@ class CompositeRenderer(nn.Module):
         diffuse_albedo = torch.clamp(params['diffuse_albedo'], min=0.00001)
         metallic = torch.clamp(params['metallic'], min=0.000001, max=0.999999)
         dielectric = torch.clamp(params['dielectric'], min=0.000001, max=0.999999)
+        if use_env_light:
+            env_light = torch.clamp(params['env_light'], min=0.000001, max=20.0)
         eta = 1.48958738
         cos_theta_i = torch.sum(viewdir * normal, dim=-1, keepdims=True)
         cos_theta_i = torch.clamp(cos_theta_i, min=0.00001, max=0.99999)
@@ -808,7 +810,10 @@ class CompositeRenderer(nn.Module):
         F_dielectric = self.dielectric_reflection(cos_theta_i, dielectric_eta)
 
         # decay light according to squared-distance falloff
-        light_intensity = light / (distance * distance + 1e-10)
+        if use_env_light:
+            light_intensity = env_light
+        else:
+            light_intensity = light / (distance * distance + 1e-10)
 
         if True:
             eta_cu = 0.28
@@ -819,8 +824,8 @@ class CompositeRenderer(nn.Module):
             # main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, eta_cu, k_cu, specular_albedo)
             main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, dielectric_eta,
                                                                   specular_albedo)
-            # main_metallic_rgb *= light_intensity
-            # main_dielectric_rgb *= light_intensity
+            main_metallic_rgb *= light_intensity
+            main_dielectric_rgb *= light_intensity
             # main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
             # F_dielectric = 0.03867
             main_specular_rgb = main_dielectric_rgb + main_metallic_rgb
@@ -848,6 +853,8 @@ class CompositeRenderer(nn.Module):
                "metallic_rgb": main_metallic_rgb,
                "dielectric_rgb": main_dielectric_rgb,
                "rgb": rgb}
+        if use_env_light:
+            ret['env_light'] = light_intensity
         return ret
 
     def forward_ggx(self, light, distance, normal, viewdir, params={}, switch_dict={}):

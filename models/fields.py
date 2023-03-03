@@ -205,7 +205,7 @@ class RenderingNetwork(nn.Module):
         if self.embed_fn is not None:
             points = self.embed_fn(points)
 
-        if self.embedview_fn is not None and self.mode != "no_view_dir":
+        if self.embedview_fn is not None and self.mode != "no_view_dir" and self.mode != "points_only":
             view_dirs = self.embedview_fn(view_dirs)
 
         rendering_input = None
