@@ -1577,11 +1577,11 @@ def main():
                         'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
         # 'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
         # 'point_light_network']
-        testbed.train_comp2(network_list=network_list, opt_sdf=False, num_iter=100000, render_fn=testbed.render_fn)
+        testbed.train_comp2(network_list=network_list, opt_sdf=False, num_iter=80000, render_fn=testbed.render_fn)
 
     if args.train_env_lighting:
         network_list = ['env_light_network']
-        testbed.train_comp2(network_list=network_list, opt_sdf=False, num_iter=150000, render_fn=testbed.render_fn)
+        testbed.train_comp2(network_list=network_list, opt_sdf=False, num_iter=120000, render_fn=testbed.render_fn_env_light)
 
     if args.render_all:
         testbed.render_all(render_fn=testbed.render_fn)
