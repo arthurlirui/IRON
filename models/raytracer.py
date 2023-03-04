@@ -789,7 +789,7 @@ def render_camera(
         camera,
         sdf_network,
         raytracer,
-        max_num_rays=200000,
+        max_num_rays=50000,
         fill_holes=fill_holes,
         detect_edges=handle_edges,
     )

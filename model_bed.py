@@ -33,6 +33,8 @@ class ModelBed:
         sdf_threshold = 5.0e-5
         sphere_tracing_iters = 16
         n_steps = 128
+        #sphere_tracing_iters = 12
+        #n_steps = 64
         max_num_pts = 200000
         self.raytracer = RayTracer(sdf_threshold, sphere_tracing_iters, n_steps, max_num_pts)
         #self.set_render_fn(render_fn=render_fn)
@@ -500,15 +502,21 @@ class ModelBed:
         ic(f"Rendering images to: {render_out_dir}")
         n_cams = len(self.cameras)
         for i in tqdm.tqdm(range(n_cams)):
-            cam, impath = self.cameras[i], self.image_fpaths[i]
+            cam, impath, immask = self.cameras[i], self.image_fpaths[i], self.mask_images[i].detach().cpu().numpy()
+            timgname = os.path.basename(impath).split('.')[0]
+            if os.path.exists(os.path.join(render_out_dir, timgname + '.png')):
+                continue
+            #if i == 15 or i == 21 or i == 23 or i == 22 or i == 25 or i == 29 or i == 30:
+            #    continue
+            print(timgname)
             results = render_camera(
                 cam,
                 self.sdf_network,
                 self.raytracer,
                 self.color_network_dict,
                 render_fn=render_fn,
-                fill_holes=True,
-                handle_edges=True,
+                fill_holes=False,
+                handle_edges=self.handle_edges,
                 is_training=False)
             if self.args.gamma_pred:
                 results["color"] = gamma_correction(results["color"], gamma=2.2)
@@ -520,38 +528,59 @@ class ModelBed:
             for x in list(results.keys()):
                 results[x] = results[x].detach().cpu().numpy()
 
+            alpha_im = results["convergent_mask"]
+            alpha_im = alpha_im[:, :, None].astype('float') * immask[:, :, 0:1]
             color_im = results["color"]
-            timgname = os.path.basename(impath).split('.')[0]
-            self.imwriter(os.path.join(render_out_dir, timgname + '.jpg'), to8b(color_im))
+            color_im = np.concatenate([color_im * immask, alpha_im], axis=-1)
+            #color_im = color_im
+
+            self.imwriter(os.path.join(render_out_dir, timgname + '.png'), to8b(color_im))
 
             normal = results["normal"]
             normal = normal / (np.linalg.norm(normal, axis=-1, keepdims=True) + 1e-10)
             normal_im = (normal + 1.0) / 2.0
-            self.imwriter(os.path.join(render_out_dir, timgname + '_normal.jpg'), to8b(normal_im))
+            normal_im = np.concatenate([normal_im * immask, alpha_im], axis=-1)
+            self.imwriter(os.path.join(render_out_dir, timgname + '_normal.png'), to8b(normal_im))
+
             diff_im = results["diffuse_color"]
-            self.imwriter(os.path.join(render_out_dir, timgname + '_diff.jpg'), to8b(diff_im))
+            diff_im = np.concatenate([diff_im * immask, alpha_im], axis=-1)
+            self.imwriter(os.path.join(render_out_dir, timgname + '_diff.png'), to8b(diff_im))
+
             specular_im = results["specular_color"]
-            self.imwriter(os.path.join(render_out_dir, timgname + '_specular.jpg'), to8b(specular_im))
+            specular_im = np.concatenate([specular_im * immask, alpha_im], axis=-1)
+            self.imwriter(os.path.join(render_out_dir, timgname + '_specular.png'), to8b(specular_im))
 
             if 'metallic_eta' in results:
                 metal_eta = results['metallic_eta']
                 metal_eta = norm_min_max(metal_eta)
-                self.imwriter(os.path.join(render_out_dir, timgname + '_metal_eta.jpg'), to8b(metal_eta))
+                metal_eta = metal_eta[:, :, None]
+                metal_eta = np.concatenate([metal_eta, metal_eta, metal_eta], axis=-1) * immask
+                metal_eta = np.concatenate([metal_eta, alpha_im], axis=-1)
+                self.imwriter(os.path.join(render_out_dir, timgname + '_metal_eta.png'), to8b(metal_eta))
 
             if 'metallic_k' in results:
                 metal_k = results['metallic_k']
                 metal_k = norm_min_max(metal_k)
-                self.imwriter(os.path.join(render_out_dir, timgname + '_metal_k.jpg'), to8b(metal_k))
+                metal_k = metal_k[:, :, None]
+                metal_k = np.concatenate([metal_k, metal_k, metal_k], axis=-1) * immask
+                metal_k = np.concatenate([metal_k, alpha_im], axis=-1)
+                self.imwriter(os.path.join(render_out_dir, timgname + '_metal_k.png'), to8b(metal_k))
 
             if 'dielectric_eta' in results:
                 dielectric_eta = results['dielectric_eta']
                 dielectric_eta = norm_min_max(dielectric_eta)
-                self.imwriter(os.path.join(render_out_dir, timgname + '_dielectric_eta.jpg'), to8b(dielectric_eta))
+                dielectric_eta = dielectric_eta[:, :, None]
+                dielectric_eta = np.concatenate([dielectric_eta, dielectric_eta, dielectric_eta], axis=-1) * immask
+                dielectric_eta = np.concatenate([dielectric_eta, alpha_im], axis=-1)
+
+                self.imwriter(os.path.join(render_out_dir, timgname + '_dielectric_eta.png'), to8b(dielectric_eta))
 
             if 'env_light' in results:
                 env_light = results['env_light']
                 env_light = norm_min_max(env_light)
-                self.imwriter(os.path.join(render_out_dir, timgname + '_env_light.jpg'), to8b(env_light))
+                #env_light = env_light[:, :, None]
+                env_light = np.concatenate([env_light * immask, alpha_im], axis=-1)
+                self.imwriter(os.path.join(render_out_dir, timgname + '_env_light.png'), to8b(env_light))
 
     def export_mesh_and_materials(self, export_out_dir, use_no_translation=False):
         ic(f"Exporting mesh and materials to: {export_out_dir}")
@@ -1573,7 +1602,7 @@ def main():
 
         testbed.train_comp2(network_list=network_list, opt_sdf=True, num_iter=50000, render_fn=testbed.render_fn)
     if args.train_refrac_index:
-        network_list = ['metallic_network', 'dielectric_network',
+        network_list = ['metallic_network', 'dielectric_network', 'specular_roughness_network',
                         'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
         # 'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
         # 'point_light_network']
@@ -1584,6 +1613,7 @@ def main():
         testbed.train_comp2(network_list=network_list, opt_sdf=False, num_iter=120000, render_fn=testbed.render_fn_env_light)
 
     if args.render_all:
+        testbed.handle_edges = False
         testbed.render_all(render_fn=testbed.render_fn)
 
     if args.export_all:

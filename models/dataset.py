@@ -80,7 +80,13 @@ def image_writer(writer_name='imageio'):
     if writer_name == 'opencv':
         def writer_opencv(outpath, img):
             try:
-                return cv2.imwrite(outpath, img[:, :, ::-1])
+                if img.shape[-1] == 4:
+                    rgb = img[:, :, 0:3][:, :, ::-1]
+                    alpha = img[:, :, 3:4]
+                    img = np.concatenate([rgb, alpha], axis=-1)
+                elif img.shape[-1] == 3:
+                    img = img[:, :, ::-1]
+                return cv2.imwrite(outpath, img)
             except:
                 return cv2.imwrite(outpath, img)
         return writer_opencv
