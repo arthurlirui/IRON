@@ -1205,8 +1205,9 @@ def load_dataset_general(data_dir, folder_name='images', file_name='cam_dict.jso
         mask_images.append(torch.from_numpy(maski))
         Ks.append(torch.from_numpy(K))
         W2Cs.append(torch.from_numpy(W2C))
-    gt_images = torch.stack(gt_images, dim=0)
-    mask_images = torch.stack(mask_images, dim=0)
+    if len(gt_images) > 0:
+        gt_images = torch.stack(gt_images, dim=0)
+        mask_images = torch.stack(mask_images, dim=0)
     Ks = torch.stack(Ks, dim=0)
     W2Cs = torch.stack(W2Cs, dim=0)
     return image_fpaths, gt_images, Ks, W2Cs, mask_images

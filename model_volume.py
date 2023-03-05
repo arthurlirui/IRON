@@ -1102,7 +1102,7 @@ if __name__ == "__main__":
         for idx in range(runner.dataset.n_RGB):
             #if idx != 22:
             #    pass
-            runner.validate_image_rendering(idx=idx, resolution_level=2)
+            runner.validate_image_rendering(idx=idx, resolution_level=1)
     elif args.mode == "validate_mesh":
         #runner.train_NIRRGB(data_type='rgb')
         runner.validate_mesh(world_space=True, resolution=1024, threshold=args.mcube_threshold)

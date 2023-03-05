@@ -40,7 +40,7 @@ class ModelBed:
         #self.set_render_fn(render_fn=render_fn)
         sdf_network = init_sdf_network_dict()
         color_network_dict = init_rendering_network_dict(renderer_name=self.renderer_name)
-        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
+        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-6)
         color_optimizer_dict = choose_optmizer(renderer_name=self.renderer_name, network_dict=color_network_dict)
         #renderer = choose_renderer(renderer_name=self.renderer_name)
         log_dir = os.path.join(self.args.out_dir, "logs")
@@ -528,6 +528,7 @@ class ModelBed:
             for x in list(results.keys()):
                 results[x] = results[x].detach().cpu().numpy()
 
+            immask = np.clip(immask, 0.0, 1.0)
             alpha_im = results["convergent_mask"]
             alpha_im = alpha_im[:, :, None].astype('float') * immask[:, :, 0:1]
             color_im = results["color"]
