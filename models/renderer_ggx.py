@@ -824,8 +824,8 @@ class CompositeRenderer(nn.Module):
             # main_metallic_rgb = self.main_metallic_reflection(cos_theta_i, eta_cu, k_cu, specular_albedo)
             main_dielectric_rgb = self.main_dielectric_reflection(D, G, cos_theta_i, dielectric_eta,
                                                                   specular_albedo)
-            main_metallic_rgb *= light_intensity
-            main_dielectric_rgb *= light_intensity
+            #main_metallic_rgb *= light_intensity
+            #main_dielectric_rgb *= light_intensity
             # main_specular_rgb = metallic * main_metallic_rgb + dielectric * main_dielectric_rgb
             # F_dielectric = 0.03867
             main_specular_rgb = main_dielectric_rgb + main_metallic_rgb

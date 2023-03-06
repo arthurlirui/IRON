@@ -152,11 +152,11 @@ class Runner:
                 if latest_model_name is not None:
                     logging.info("Find FLASH checkpoint: {}".format(latest_model_name))
                     self.load_checkpoint(self.flash_exp_dir, latest_model_name)
-                else:
-                    latest_model_name = self.search_model_name(self.env_exp_dir)
-                    if latest_model_name is not None:
-                        logging.info("Find ENV checkpoint: {}".format(latest_model_name))
-                        self.load_checkpoint(self.env_exp_dir, latest_model_name)
+                # else:
+                #     latest_model_name = self.search_model_name(self.env_exp_dir)
+                #     if latest_model_name is not None:
+                #         logging.info("Find ENV checkpoint: {}".format(latest_model_name))
+                #         self.load_checkpoint(self.env_exp_dir, latest_model_name)
 
         if self.mode[:5] == "train":
             self.file_backup()
@@ -839,7 +839,7 @@ class Runner:
                 elif imggt.shape[-1] == 1:
                     imggt = np.concatenate([imggt, imggt, imggt], axis=-1)
                 #img = np.concatenate([img_fine[..., i], imggt], axis=0).astype('uint8')
-                filename = os.path.basename(self.dataset.RGB_list[idx])
+                filename = os.path.basename(self.dataset.RGB_list[idx]).split('.')[0]
                 img_path = os.path.join(
                     self.base_exp_dir,
                     "validations_fine_rendering",

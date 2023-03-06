@@ -340,7 +340,7 @@ def init_rendering_network_dict(renderer_name='comp'):
                 squeeze_out=True,
                 skip_in=(4,),
                 #output_bias=0.0,
-                output_scale=1.0,
+                #output_scale=1.0,
             ).cuda(),
             # "diffuse_albedo_network": RenderingNetwork(
             #     d_in=9,
@@ -714,7 +714,7 @@ def choose_optmizer(renderer_name='comp', network_name_list=[], network_dict={})
             "diffuse_albedo_network": torch.optim.Adam(network_dict["diffuse_albedo_network"].parameters(), lr=1e-4),
             "specular_albedo_network": torch.optim.Adam(network_dict["specular_albedo_network"].parameters(), lr=1e-4),
             "specular_roughness_network": torch.optim.Adam(network_dict["specular_roughness_network"].parameters(), lr=1e-4),
-            "point_light_network": torch.optim.Adam(network_dict["point_light_network"].parameters(), lr=1e-4),
+            "point_light_network": torch.optim.Adam(network_dict["point_light_network"].parameters(), lr=1e-2),
             "metallic_network": torch.optim.Adam(network_dict["metallic_network"].parameters(), lr=1e-4),
             "dielectric_network": torch.optim.Adam(network_dict["dielectric_network"].parameters(), lr=1e-4),
             "metallic_eta_network": torch.optim.Adam(network_dict["metallic_eta_network"].parameters(), lr=1e-4),

@@ -30,17 +30,17 @@ class ModelBed:
         #self.renderer_name = 'comp2'
         self.renderer_name = args.renderer_name
         self.device = 'cuda:0'
-        sdf_threshold = 5.0e-5
+        sdf_threshold = 5.0e-6
         sphere_tracing_iters = 16
         n_steps = 128
         #sphere_tracing_iters = 12
         #n_steps = 64
-        max_num_pts = 200000
+        max_num_pts = 300000
         self.raytracer = RayTracer(sdf_threshold, sphere_tracing_iters, n_steps, max_num_pts)
         #self.set_render_fn(render_fn=render_fn)
         sdf_network = init_sdf_network_dict()
         color_network_dict = init_rendering_network_dict(renderer_name=self.renderer_name)
-        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-6)
+        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
         color_optimizer_dict = choose_optmizer(renderer_name=self.renderer_name, network_dict=color_network_dict)
         #renderer = choose_renderer(renderer_name=self.renderer_name)
         log_dir = os.path.join(self.args.out_dir, "logs")
@@ -887,11 +887,16 @@ class ModelBed:
                 self.validate_image(resize_ratio=0.25, global_step=global_step)
 
     def component_switch(self, network_list=[]):
-        for nn in network_list:
-            if nn in self.color_network_dict:
+        for nn in self.color_network_dict:
+            if nn in network_list:
                 self.color_network_dict[nn].requires_grad_(requires_grad=True)
             else:
                 self.color_network_dict[nn].requires_grad_(requires_grad=False)
+        # for nn in network_list:
+        #     if nn in self.color_network_dict:
+        #         self.color_network_dict[nn].requires_grad_(requires_grad=True)
+        #     else:
+        #         self.color_network_dict[nn].requires_grad_(requires_grad=False)
 
     def calc_eik_loss(self, h=1, w=1):
         eik_points = torch.empty(h * w // 2, 3).cuda().float().uniform_(-1.0, 1.0)
@@ -1148,7 +1153,7 @@ class ModelBed:
                                                                                   trgt_H=self.args.patch_size,
                                                                                   image=self.gt_images[idx],
                                                                                   mask=self.mask_images[idx],
-                                                                                  center_crop=True)
+                                                                                  center_crop=False)
 
             results = render_camera(camera_crop,
                                     self.sdf_network,
@@ -1539,7 +1544,7 @@ def config_parser():
         action="store_true",
         help="whether the object of interest is made of metals or the scene contains metals",
     )
-    parser.add_argument("--init_light_scale", type=float, default=20.0, help="scaling parameters for light")
+    parser.add_argument("--init_light_scale", type=float, default=5.0, help="scaling parameters for light")
     parser.add_argument(
         "--export_all",
         action="store_true",
@@ -1594,10 +1599,17 @@ def main():
     parser.write_config_file(args, [os.path.join(args.out_dir, "args.txt")])
     testbed = ModelBed(args=args, use_cuda=True)
     if args.train_rgb:
+        if False:
+            network_list = ['point_light_network']
+            testbed.train_comp2(network_list=network_list,
+                                opt_sdf=False,
+                                num_iter=5000,
+                                render_fn=testbed.render_fn)
         network_list = ['color_network',
                         'diffuse_albedo_network',
                         'specular_albedo_network',
-                        'specular_roughness_network', 'point_light_network']
+                        'specular_roughness_network',
+                        'point_light_network']
                         #'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
                         #'point_light_network']
 

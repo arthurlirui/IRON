@@ -57,6 +57,7 @@ def load_neus_checkpoint(neus_ckpt_fpath, sdf_network, color_network_dict, load_
             if load_diffuse_albedo:
                 try:
                     color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["color_network_fine"])
+                    #color_network_dict["diffuse_albedo_network"].load_state_dict(ckpt["nerf"])
                 except:
                     ic(f"Loading diffuse from neus fail")
             # color_network_dict["specular_albedo_network"].load_state_dict(ckpt["color_network_fine"])
