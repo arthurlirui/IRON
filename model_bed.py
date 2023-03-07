@@ -40,7 +40,7 @@ class ModelBed:
         #self.set_render_fn(render_fn=render_fn)
         sdf_network = init_sdf_network_dict()
         color_network_dict = init_rendering_network_dict(renderer_name=self.renderer_name)
-        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
+        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-4)
         color_optimizer_dict = choose_optmizer(renderer_name=self.renderer_name, network_dict=color_network_dict)
         #renderer = choose_renderer(renderer_name=self.renderer_name)
         log_dir = os.path.join(self.args.out_dir, "logs")
@@ -587,6 +587,7 @@ class ModelBed:
                 specular_roughness = results['specular_roughness']
                 specular_roughness = norm_min_max(specular_roughness)
                 # env_light = env_light[:, :, None]
+                specular_roughness = np.stack([specular_roughness, specular_roughness, specular_roughness], axis=2)
                 specular_roughness = np.concatenate([specular_roughness * immask, alpha_im], axis=-1)
                 self.imwriter(os.path.join(render_out_dir, timgname + '_roughness.png'), to8b(specular_roughness))
 
