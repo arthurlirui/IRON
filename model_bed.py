@@ -30,12 +30,12 @@ class ModelBed:
         #self.renderer_name = 'comp2'
         self.renderer_name = args.renderer_name
         self.device = 'cuda:0'
-        sdf_threshold = 5.0e-6
+        sdf_threshold = 5.0e-5
         sphere_tracing_iters = 16
         n_steps = 128
         #sphere_tracing_iters = 12
         #n_steps = 64
-        max_num_pts = 300000
+        max_num_pts = 200000
         self.raytracer = RayTracer(sdf_threshold, sphere_tracing_iters, n_steps, max_num_pts)
         #self.set_render_fn(render_fn=render_fn)
         sdf_network = init_sdf_network_dict()
@@ -506,9 +506,9 @@ class ModelBed:
             timgname = os.path.basename(impath).split('.')[0]
             if os.path.exists(os.path.join(render_out_dir, timgname + '.png')):
                 continue
-            #if i == 15 or i == 21 or i == 23 or i == 22 or i == 25 or i == 29 or i == 30:
-            #    continue
-            print(timgname)
+            #if i != 13:
+            #    pass
+            #print(timgname)
             results = render_camera(
                 cam,
                 self.sdf_network,
@@ -582,6 +582,13 @@ class ModelBed:
                 #env_light = env_light[:, :, None]
                 env_light = np.concatenate([env_light * immask, alpha_im], axis=-1)
                 self.imwriter(os.path.join(render_out_dir, timgname + '_env_light.png'), to8b(env_light))
+
+            if 'specular_roughness' in results:
+                specular_roughness = results['specular_roughness']
+                specular_roughness = norm_min_max(specular_roughness)
+                # env_light = env_light[:, :, None]
+                specular_roughness = np.concatenate([specular_roughness * immask, alpha_im], axis=-1)
+                self.imwriter(os.path.join(render_out_dir, timgname + '_roughness.png'), to8b(specular_roughness))
 
     def export_mesh_and_materials(self, export_out_dir, use_no_translation=False):
         ic(f"Exporting mesh and materials to: {export_out_dir}")
