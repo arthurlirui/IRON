@@ -333,6 +333,7 @@ def init_rendering_network_dict(renderer_name='comp'):
                 d_feature=256,
                 d_hidden=256,
                 n_layers=8,
+                #n_layers=4,
                 multires=10,
                 # multires=10,
                 multires_view=4,

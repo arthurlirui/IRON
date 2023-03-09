@@ -40,7 +40,7 @@ class ModelBed:
         #self.set_render_fn(render_fn=render_fn)
         sdf_network = init_sdf_network_dict()
         color_network_dict = init_rendering_network_dict(renderer_name=self.renderer_name)
-        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-4)
+        sdf_optimizer = torch.optim.Adam(sdf_network.parameters(), lr=1e-5)
         color_optimizer_dict = choose_optmizer(renderer_name=self.renderer_name, network_dict=color_network_dict)
         #renderer = choose_renderer(renderer_name=self.renderer_name)
         log_dir = os.path.join(self.args.out_dir, "logs")
@@ -1623,7 +1623,7 @@ def main():
 
         testbed.train_comp2(network_list=network_list, opt_sdf=True, num_iter=50000, render_fn=testbed.render_fn)
     if args.train_refrac_index:
-        network_list = ['metallic_network', 'dielectric_network', 'specular_roughness_network',
+        network_list = ['metallic_network', 'dielectric_network',
                         'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
         # 'metallic_eta_network', 'metallic_k_network', 'dielectric_eta_network']
         # 'point_light_network']
