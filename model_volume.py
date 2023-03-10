@@ -262,8 +262,8 @@ class Runner:
         self.update_learning_rate()
         self.validate_image(idx=10, resolution_level=4)
         res_step = self.end_iter - self.iter_step
-        res_step = 0
-        res_step = self.RGB_end_iter - self.iter_step
+        #res_step = 0
+        #res_step = self.RGB_end_iter - self.iter_step
         image_perm = torch.randperm(self.dataset.n_RGB)
 
         for iter_i in tqdm(range(res_step)):
