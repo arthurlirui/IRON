@@ -46,7 +46,7 @@ def image_reader(reader_name='imageio'):
         return image_imageio
     if reader_name == 'opencv':
         def image_opencv(im_name):
-            return cv2.imread(im_name)[:, :, :3][:, :, ::-1]
+            return cv2.imread(im_name, cv2.IMREAD_UNCHANGED)[:, :, :3][:, :, ::-1]
         return image_opencv
 
 
@@ -892,12 +892,22 @@ class DatasetGeneral:
             self.masks_RGB_np = np.ones_like(self.RGB_np)
         else:
             try:
-                self.masks_RGB_lis = sorted(
-                    glob.glob(os.path.join(self.data_dir, self.data_type, 'masks', f'*.{self.file_type}')))
-                self.masks_RGB_np = np.stack([self.image_reader(im_name) for im_name in self.masks_RGB_lis]) / 255.0
+                if os.path.exists(os.path.join(self.data_dir, 'masks')):
+                    self.masks_RGB_lis = sorted(
+                        glob.glob(os.path.join(self.data_dir, 'masks', f'*.{self.file_type}')))
+                    self.masks_RGB_np = np.stack([self.image_reader(im_name) for im_name in self.masks_RGB_lis]) / 255.0
+                elif os.path.exists(os.path.join(self.data_dir, self.data_type, 'masks')):
+                    self.masks_RGB_lis = sorted(
+                        glob.glob(os.path.join(self.data_dir, self.data_type, 'masks', f'*.{self.file_type}')))
+                    self.masks_RGB_np = np.stack([self.image_reader(im_name) for im_name in self.masks_RGB_lis]) / 255.0
+                else:
+                    self.masks_RGB_lis = sorted(
+                        glob.glob(os.path.join(self.data_dir, self.data_type, 'masks', f'*.{self.file_type}')))
+                    self.masks_RGB_np = np.stack([self.image_reader(im_name) for im_name in self.masks_RGB_lis]) / 255.0
             except:
                 # traceback.print_exc()
                 print("Loading mask images failed; try not using masks")
+                #h, w, d = self.RGB_np
                 self.masks_lis = None
                 self.masks_np = np.ones_like(self.RGB_np)
                 self.masks_RGB_np = np.ones_like(self.RGB_np)

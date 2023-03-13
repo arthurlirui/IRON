@@ -515,7 +515,7 @@ class ModelBed:
                 self.raytracer,
                 self.color_network_dict,
                 render_fn=render_fn,
-                fill_holes=False,
+                fill_holes=True,
                 handle_edges=self.handle_edges,
                 is_training=False)
             if self.args.gamma_pred:
